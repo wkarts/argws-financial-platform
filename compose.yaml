@@ -1,0 +1,274 @@
+name: ${COMPOSE_PROJECT_NAME:-argws-financial-platform}
+
+x-backend-common: &backend-common
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  image: argws-financial-api:${APP_VERSION:-0.1.0-alpha.1}
+  env_file:
+    - .env
+  restart: unless-stopped
+  networks:
+    - financial-internal
+  volumes:
+    - financial-backups:/data/backups
+    - financial-acme:/data/acme
+    - financial-domain-config:/data/cloudpanel/domains
+    - ${RCLONE_CONFIG_PATH:-./infrastructure/backup/rclone.conf.example}:/run/secrets/rclone_config:ro
+
+services:
+  financial-postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-financial_platform}
+      POSTGRES_USER: ${POSTGRES_USER:-financial_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obrigatória}
+      TZ: ${APP_TIMEZONE:-America/Bahia}
+    command:
+      - postgres
+      - -c
+      - max_connections=300
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - effective_cache_size=768MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - wal_compression=on
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-financial_admin} -d ${POSTGRES_DB:-financial_platform}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    volumes:
+      - financial-postgres-data:/var/lib/postgresql/data
+    networks:
+      - financial-internal
+
+  financial-redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - financial-redis-data:/data
+    networks:
+      - financial-internal
+
+  financial-rabbitmq:
+    image: rabbitmq:4-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-financial}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}
+      RABBITMQ_DEFAULT_VHOST: financial
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    volumes:
+      - financial-rabbitmq-data:/var/lib/rabbitmq
+    ports:
+      - "${RABBITMQ_MANAGEMENT_BIND_IP:-127.0.0.1}:${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    networks:
+      - financial-internal
+
+  financial-minio:
+    image: quay.io/minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-financial}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obrigatória}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    volumes:
+      - financial-minio-data:/data
+    ports:
+      - "${MINIO_CONSOLE_BIND_IP:-127.0.0.1}:${MINIO_CONSOLE_PORT:-9001}:9001"
+    networks:
+      - financial-internal
+
+  financial-minio-init:
+    image: quay.io/minio/mc:latest
+    restart: "no"
+    depends_on:
+      financial-minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command: |
+      mc alias set local http://financial-minio:9000 "${MINIO_ROOT_USER:-financial}" "${MINIO_ROOT_PASSWORD}";
+      mc mb --ignore-existing "local/${BACKUP_S3_BUCKET:-financial-backups}";
+      mc anonymous set none "local/${BACKUP_S3_BUCKET:-financial-backups}";
+    networks:
+      - financial-internal
+
+  financial-migrate:
+    <<: *backend-common
+    restart: "no"
+    command: ["python", "-m", "app.cli", "migrate-platform"]
+    depends_on:
+      financial-postgres:
+        condition: service_healthy
+
+  financial-init:
+    <<: *backend-common
+    restart: "no"
+    command: ["python", "-m", "app.cli", "bootstrap"]
+    depends_on:
+      financial-migrate:
+        condition: service_completed_successfully
+      financial-minio-init:
+        condition: service_completed_successfully
+      financial-redis:
+        condition: service_healthy
+      financial-rabbitmq:
+        condition: service_healthy
+
+  financial-api:
+    <<: *backend-common
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --workers
+      - ${API_WORKERS:-2}
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
+    depends_on:
+      financial-init:
+        condition: service_completed_successfully
+      financial-redis:
+        condition: service_healthy
+      financial-rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  financial-worker:
+    <<: *backend-common
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app:celery_app
+      - worker
+      - --loglevel=INFO
+      - --concurrency=${CELERY_CONCURRENCY:-4}
+      - --queues=financial.default,financial.provisioning,financial.billing,financial.outbox,financial.notifications,financial.backups
+    depends_on:
+      financial-init:
+        condition: service_completed_successfully
+      financial-rabbitmq:
+        condition: service_healthy
+      financial-redis:
+        condition: service_healthy
+
+  financial-beat:
+    <<: *backend-common
+    command:
+      - celery
+      - -A
+      - app.workers.celery_app:celery_app
+      - beat
+      - --loglevel=INFO
+      - --schedule=/tmp/celerybeat-schedule
+    depends_on:
+      financial-init:
+        condition: service_completed_successfully
+      financial-rabbitmq:
+        condition: service_healthy
+      financial-redis:
+        condition: service_healthy
+
+  financial-web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_APP_NAME: ${VITE_APP_NAME:-ARGWS Financial Platform}
+        VITE_CONTROL_PLANE_HOST: ${CONTROL_PLANE_HOST}
+        VITE_API_BASE_URL: /api
+    image: argws-financial-web:${APP_VERSION:-0.1.0-alpha.1}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - financial-internal
+
+  financial-api-test:
+    <<: *backend-common
+    profiles: ["tools"]
+    restart: "no"
+    command: ["pytest", "-q", "--disable-warnings", "--maxfail=1"]
+
+  financial-web-test:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      target: build
+      args:
+        VITE_APP_NAME: ${VITE_APP_NAME:-ARGWS Financial Platform}
+        VITE_CONTROL_PLANE_HOST: ${CONTROL_PLANE_HOST:-control.localhost}
+        VITE_API_BASE_URL: /api
+    image: argws-financial-web-test:${APP_VERSION:-0.1.0-alpha.1}
+    command: ["npm", "run", "test:run"]
+    networks:
+      - financial-internal
+
+  financial-gateway:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      financial-api:
+        condition: service_healthy
+      financial-web:
+        condition: service_healthy
+    ports:
+      - "${GATEWAY_BIND_IP:-127.0.0.1}:${GATEWAY_PORT:-8800}:80"
+    volumes:
+      - ./infrastructure/nginx/gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - financial-internal
+
+networks:
+  financial-internal:
+    driver: bridge
+
+volumes:
+  financial-postgres-data:
+  financial-redis-data:
+  financial-rabbitmq-data:
+  financial-minio-data:
+  financial-backups:
+  financial-acme:
+  financial-domain-config:

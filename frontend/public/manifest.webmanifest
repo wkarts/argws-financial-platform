@@ -1,0 +1,14 @@
+{
+  "name": "ARGWS Financial Platform",
+  "short_name": "ARGWS Financeiro",
+  "description": "Control Plane e gestão financeira multitenant",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f766e",
+  "icons": [
+    { "src": "/icons/icon-192.svg", "sizes": "192x192", "type": "image/svg+xml" },
+    { "src": "/icons/icon-512.svg", "sizes": "512x512", "type": "image/svg+xml" }
+  ]
+}
