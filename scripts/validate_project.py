@@ -29,7 +29,10 @@ def warning(message: str) -> None:
 
 
 def project_files() -> list[Path]:
-    ignored = {".git", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "dist", "financial-data", ".releases", "release-artifacts"}
+    ignored = {
+        ".git", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+        "dist", "financial-data", ".releases", "release-artifacts",
+    }
     return [p for p in ROOT.rglob("*") if p.is_file() and not any(part in ignored for part in p.parts)]
 
 
@@ -70,8 +73,8 @@ def load_yaml(path: Path) -> dict[str, Any]:
 def check_required_files() -> None:
     required = [
         "README.md", "DELIVERY_INDEX.md", "LICENSE", "SECURITY.md", "VERSION", "CHANGELOG.md", "RELEASE_NOTES.md",
-        "PR_TITLE.md", "PR_DESCRIPTION.md", "DELIVERY_INDEX.md", ".env.example", "compose.yaml", "Makefile",
-        "backend/Dockerfile", "frontend/Dockerfile", "backend/alembic-platform.ini", "backend/alembic-tenant.ini",
+        "PR_TITLE.md", "PR_DESCRIPTION.md", ".env.example", "compose.yaml", "Makefile",
+        "backend/Dockerfile", "backend/app/version.py", "frontend/Dockerfile", "backend/alembic-platform.ini", "backend/alembic-tenant.ini",
         "infrastructure/nginx/gateway.conf", "infrastructure/docker/gateway/Dockerfile",
         "infrastructure/backup/rclone.conf.example", "secrets/backup-age-identity.txt.example",
         "scripts/deploy_cloudpanel_dockge.sh", "scripts/install_local.sh", "scripts/backup.sh", "scripts/restore.sh",
@@ -85,7 +88,7 @@ def check_required_files() -> None:
         "docs/operations/BACKUP_RESTORE.md", "docs/operations/DOMAINS_SSL.md",
         "docs/integrations/SMTP_EVOLUTION.md", "docs/integrations/BANKING_CNAB.md",
         "docs/product/COMPLETION_MATRIX.md", "docs/release/DELIVERY_REPORT.md", "docs/API.md", "docs/ACCEPTANCE_CHECKLIST.md",
-        ".github/workflows/ci.yml", ".github/workflows/release.yml",
+        ".github/workflows/ci.yml", ".github/workflows/publish.yml",
     ]
     for item in required:
         if not (ROOT / item).is_file():
@@ -202,7 +205,6 @@ def check_compose() -> None:
     check_compose_file(ROOT / "compose.yaml", ROOT / ".env.example", source_services, queues)
     check_compose_file(ROOT / "deployments/docker/compose.images.yaml", ROOT / "deployments/docker/.env.example", image_services, queues)
     check_compose_file(ROOT / "deployments/portainer/stack.yaml", ROOT / "deployments/portainer/.env.example", image_services, queues)
-    # Arquivos entregues ao Dockge/CloudPanel precisam estar sincronizados com o contrato canônico.
     canonical = (ROOT / "compose.yaml").read_bytes()
     for copy in (ROOT / "deployments/dockge/compose.yaml", ROOT / "deployments/cloudpanel/compose.yaml"):
         if copy.read_bytes() != canonical:
@@ -211,7 +213,7 @@ def check_compose() -> None:
     if re.search(r"^\s+build:\s*$", portainer_text, re.MULTILINE):
         error("A stack Portainer de imagens não pode depender de build local")
     if "GATEWAY_IMAGE" not in portainer_text:
-        error("Stack Portainer não referencia imagem versionada do gateway")
+        error("Stack Portainer não referencia a imagem do gateway")
 
 
 def check_yaml_files() -> None:
@@ -219,7 +221,8 @@ def check_yaml_files() -> None:
     for path in sorted(ROOT.rglob("*.yml")) + sorted(ROOT.rglob("*.yaml")):
         if any(part in {".git", "node_modules", "financial-data"} for part in path.parts):
             continue
-        load_yaml(path); count += 1
+        load_yaml(path)
+        count += 1
     METRICS["yaml_files"] = count
 
 
@@ -234,6 +237,8 @@ def check_workflows() -> None:
 
 def check_frontend_manifest() -> None:
     data = json.loads((ROOT / "frontend/package.json").read_text(encoding="utf-8"))
+    if "version" in data:
+        error("frontend/package.json não deve duplicar a versão da aplicação; use VERSION")
     for section in ("dependencies", "devDependencies"):
         for package, version in data.get(section, {}).items():
             if str(version).startswith(("^", "~", "*", ">", "<")):
@@ -283,8 +288,6 @@ def check_frontend_surface() -> None:
         error(f"Telas obrigatórias ausentes: {sorted(missing)}")
 
 
-
-
 def check_env() -> None:
     env_paths = [
         ROOT / ".env.example",
@@ -304,24 +307,39 @@ def check_env() -> None:
 
     canonical = parse_env(ROOT / ".env.example")
     required = {
-        "APP_SECRET_KEY", "FIELD_ENCRYPTION_KEY", "POSTGRES_PASSWORD", "RABBITMQ_PASSWORD", "MINIO_ROOT_PASSWORD",
-        "S3_SECRET_KEY", "CONTROL_PLANE_HOST", "API_HOST", "TENANT_DOMAIN_ROOT", "DOMAIN_RECONCILIATION_TOKEN",
-        "EVOLUTION_WEBHOOK_SECRET", "BANKING_WEBHOOK_SECRET", "RATE_LIMIT_DEFAULT", "FINANCIAL_DATA_ROOT",
-        "BACKEND_IMAGE", "FRONTEND_IMAGE", "GATEWAY_IMAGE", "RCLONE_CONFIG_PATH", "BACKUP_AGE_IDENTITY_PATH",
+        "APP_VERSION", "VITE_APP_VERSION", "APP_SECRET_KEY", "FIELD_ENCRYPTION_KEY", "POSTGRES_PASSWORD",
+        "RABBITMQ_PASSWORD", "MINIO_ROOT_PASSWORD", "S3_SECRET_KEY", "CONTROL_PLANE_HOST", "API_HOST",
+        "TENANT_DOMAIN_ROOT", "DOMAIN_RECONCILIATION_TOKEN", "EVOLUTION_WEBHOOK_SECRET", "BANKING_WEBHOOK_SECRET",
+        "RATE_LIMIT_DEFAULT", "FINANCIAL_DATA_ROOT", "BACKEND_IMAGE", "FRONTEND_IMAGE", "GATEWAY_IMAGE",
+        "ACME_IMAGE", "CLOUDPANEL_AGENT_IMAGE", "RCLONE_CONFIG_PATH", "BACKUP_AGE_IDENTITY_PATH",
     }
     missing = required - set(canonical)
     if missing:
         error(f"Variáveis obrigatórias ausentes no .env.example: {sorted(missing)}")
     if canonical.get("BOOTSTRAP_DEMO_TENANT", "").lower() != "false":
         error("BOOTSTRAP_DEMO_TENANT deve vir desabilitado no ambiente de produção")
+    if canonical.get("APP_VERSION") or canonical.get("VITE_APP_VERSION"):
+        error("APP_VERSION e VITE_APP_VERSION devem ficar vazios nos exemplos; os scripts leem VERSION")
+
     canonical_keys = set(canonical)
+    image_keys = {"BACKEND_IMAGE", "FRONTEND_IMAGE", "GATEWAY_IMAGE", "ACME_IMAGE", "CLOUDPANEL_AGENT_IMAGE"}
     for path in env_paths[1:]:
         values = parse_env(path)
         if values.get("APP_VERSION") != canonical.get("APP_VERSION"):
-            error(f"Versão/env divergente em {path.relative_to(ROOT)}")
+            error(f"APP_VERSION deve ser automática em {path.relative_to(ROOT)}")
+        if values.get("VITE_APP_VERSION") != canonical.get("VITE_APP_VERSION"):
+            error(f"VITE_APP_VERSION deve ser automática em {path.relative_to(ROOT)}")
         missing_keys = sorted(canonical_keys - set(values))
         if missing_keys:
             error(f"Variáveis canônicas ausentes em {path.relative_to(ROOT)}: {missing_keys}")
+        for key in image_keys:
+            value = values.get(key, "")
+            if value and not value.endswith(":latest"):
+                error(f"Imagem do produto deve usar :latest em {path.relative_to(ROOT)}: {key}={value}")
+    for key in image_keys:
+        value = canonical.get(key, "")
+        if value and not value.endswith(":latest"):
+            error(f"Imagem do produto deve usar :latest no .env.example: {key}={value}")
 
 
 def check_migrations() -> None:
@@ -348,32 +366,57 @@ def check_migrations() -> None:
 
 def check_versions() -> None:
     canonical = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", canonical):
+        error(f"VERSION inválida: {canonical!r}")
+
     init_text = (ROOT / "backend/app/__init__.py").read_text(encoding="utf-8")
-    match = re.search(r'__version__\s*=\s*["\']([^"\']+)', init_text)
-    frontend = json.loads((ROOT / "frontend/package.json").read_text(encoding="utf-8"))["version"]
-    env_version = parse_env(ROOT / ".env.example").get("APP_VERSION")
     config_text = (ROOT / "backend/app/core/config.py").read_text(encoding="utf-8")
-    config_match = re.search(r'app_version:\s*str\s*=\s*["\']([^"\']+)', config_text)
-    observed = {
-        "backend/app/__init__.py": match.group(1) if match else None,
-        "backend/app/core/config.py": config_match.group(1) if config_match else None,
-        "frontend/package.json": frontend,
-        ".env.example": env_version,
-    }
-    for source, value in observed.items():
-        if value != canonical:
-            error(f"Versão divergente em {source}: {value!r}; esperado {canonical!r}")
+    version_text = (ROOT / "backend/app/version.py").read_text(encoding="utf-8")
+    vite_text = (ROOT / "frontend/vite.config.ts").read_text(encoding="utf-8")
+    docker_backend = (ROOT / "backend/Dockerfile").read_text(encoding="utf-8")
+    docker_frontend = (ROOT / "frontend/Dockerfile").read_text(encoding="utf-8")
+
+    if "get_app_version()" not in init_text:
+        error("backend/app/__init__.py não resolve a versão pela fonte canônica")
+    if "app_version: str = get_app_version()" not in config_text:
+        error("Settings.app_version não resolve a versão pela fonte canônica")
+    if 'os.getenv("APP_VERSION"' not in version_text or '"VERSION"' not in version_text:
+        error("backend/app/version.py não implementa resolução de versão por ambiente/VERSION")
+    if "../VERSION" not in vite_text or "VITE_APP_VERSION" not in vite_text:
+        error("Vite não injeta VITE_APP_VERSION a partir de VERSION")
+    if "COPY VERSION" not in docker_backend or "COPY VERSION" not in docker_frontend:
+        error("Dockerfiles precisam empacotar o arquivo VERSION")
+
+    operational_paths = [
+        ROOT / "backend/app/__init__.py",
+        ROOT / "backend/app/core/config.py",
+        ROOT / "frontend/package.json",
+        ROOT / "frontend/Dockerfile",
+        ROOT / "frontend/vite.config.ts",
+        ROOT / ".env.example",
+        ROOT / "compose.yaml",
+        ROOT / "deployments/docker/compose.images.yaml",
+        ROOT / "deployments/portainer/stack.yaml",
+        ROOT / "deployments/portainer/stack-build.yaml",
+        ROOT / "deployments/docker/install.sh",
+        ROOT / "deployments/portainer/deploy.sh",
+    ]
+    for path in operational_paths:
+        if canonical and canonical in path.read_text(encoding="utf-8"):
+            error(f"Versão canônica duplicada em arquivo operacional: {path.relative_to(ROOT)}")
+
+    METRICS["canonical_version"] = canonical
 
 
 def check_runtime_imports_and_routes() -> None:
-    env = os.environ.copy(); env["PYTHONPATH"] = str(ROOT / "backend"); env["APP_ENV"] = "testing"
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "backend")
+    env["APP_ENV"] = "testing"
     mapper_code = "from sqlalchemy.orm import configure_mappers; import app.models.platform, app.models.tenant; configure_mappers(); print('OK')"
     result = subprocess.run([sys.executable, "-c", mapper_code], cwd=ROOT, env=env, capture_output=True, text=True, check=False)
     if result.returncode:
         error(f"Mapeamentos SQLAlchemy falharam: {(result.stderr or result.stdout).strip()}")
 
-    # Contrato estático de rotas. Evita depender das bibliotecas opcionais do
-    # runtime no host que apenas valida o pacote.
     route_count = 0
     seen: set[tuple[str, str, str]] = set()
     for path in sorted((ROOT / "backend/app/api/routes").glob("*.py")):
@@ -393,7 +436,8 @@ def check_runtime_imports_and_routes() -> None:
                 key = (path.name, method, arg.value)
                 if key in seen:
                     error(f"Rota duplicada no mesmo módulo: {path.relative_to(ROOT)} {method} {arg.value}")
-                seen.add(key); route_count += 1
+                seen.add(key)
+                route_count += 1
     METRICS["fastapi_route_decorators"] = route_count
 
 
@@ -467,8 +511,10 @@ def check_frontend_api_contract() -> None:
     missing = [
         (method, endpoint, path)
         for method, endpoint, path in calls
-        if not any(method == backend_method and _route_matches(endpoint, backend_path)
-                   for backend_method, backend_path in backend_routes)
+        if not any(
+            method == backend_method and _route_matches(endpoint, backend_path)
+            for backend_method, backend_path in backend_routes
+        )
     ]
     for method, endpoint, path in missing:
         error(f"Chamada frontend sem rota backend: {path.relative_to(ROOT)} {method} {endpoint}")
@@ -498,9 +544,24 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Valida a ARGWS Financial Platform")
     parser.add_argument("--allow-runtime-files", action="store_true")
     args = parser.parse_args()
-    check_required_files(); check_python(); check_internal_python_imports(); check_settings_contract(); check_shell()
-    check_yaml_files(); check_compose(); check_workflows(); check_frontend_manifest(); check_vue_imports(); check_frontend_surface()
-    check_env(); check_migrations(); check_alembic_configs(); check_versions(); check_runtime_imports_and_routes(); check_frontend_api_contract(); check_sensitive_files(allow_runtime_files=args.allow_runtime_files)
+    check_required_files()
+    check_python()
+    check_internal_python_imports()
+    check_settings_contract()
+    check_shell()
+    check_yaml_files()
+    check_compose()
+    check_workflows()
+    check_frontend_manifest()
+    check_vue_imports()
+    check_frontend_surface()
+    check_env()
+    check_migrations()
+    check_alembic_configs()
+    check_versions()
+    check_runtime_imports_and_routes()
+    check_frontend_api_contract()
+    check_sensitive_files(allow_runtime_files=args.allow_runtime_files)
     files = project_files()
     report = {
         "status": "PASS" if not ERRORS else "FAIL",
@@ -514,9 +575,10 @@ def main() -> int:
             "total_files": len(files),
         },
     }
-    (ROOT / "VALIDATION_REPORT.json").write_text(json.dumps(report, ensure_ascii=False, indent=2)+"\n", encoding="utf-8")
+    (ROOT / "VALIDATION_REPORT.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 1 if ERRORS else 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
