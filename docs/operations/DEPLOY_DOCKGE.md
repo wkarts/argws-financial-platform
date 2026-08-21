@@ -2,9 +2,9 @@
 
 ## Objetivo
 
-Executar a ARGWS Financial Platform em uma stack gerenciada pelo Dockge, mantendo o código-fonte, o Compose, os segredos e os volumes persistentes no diretório configurado para stacks.
+Executar a ARGWS Financial Platform no Dockge usando **somente imagens publicadas no GHCR**, sem compilar backend/frontend no servidor e sem exigir o código-fonte dentro da pasta da stack.
 
-## Arquivos entregues
+## Arquivos
 
 ```text
 deployments/dockge/
@@ -17,7 +17,7 @@ deployments/dockge/
 └── README.md
 ```
 
-O `compose.yaml` desta pasta é sincronizado com o Compose principal de build a partir do código-fonte.
+O `deployments/dockge/compose.yaml` é uma stack **image-only** independente do Compose de desenvolvimento/build da raiz.
 
 ## Pré-requisitos
 
@@ -25,13 +25,47 @@ O `compose.yaml` desta pasta é sincronizado com o Compose principal de build a 
 - Docker Engine;
 - Docker Compose v2;
 - Dockge instalado;
-- Python 3 para geração inicial dos segredos;
 - acesso ao diretório de stacks do Dockge;
-- proxy reverso externo para a porta do gateway, normalmente `127.0.0.1:8800`.
+- acesso ao `ghcr.io`;
+- proxy reverso externo para `127.0.0.1:GATEWAY_PORT`.
+
+## Imagens
+
+O canal operacional utiliza sempre `latest`:
+
+```text
+ghcr.io/wkarts/argws-financial-api:latest
+ghcr.io/wkarts/argws-financial-web:latest
+ghcr.io/wkarts/argws-financial-gateway:latest
+```
+
+As tags versionadas continuam publicadas para auditoria e rollback, mas não são fixadas no `.env` de operação normal.
+
+## Importação manual no Dockge
+
+Na pasta da stack são suficientes:
+
+```text
+argws-financial-platform/
+├── compose.yaml
+└── .env
+```
+
+Use `deployments/dockge/compose.yaml` como `compose.yaml` da stack e `deployments/dockge/.env.example` como base do `.env`.
+
+Depois:
+
+```bash
+docker compose config
+docker compose pull
+docker compose up -d
+```
+
+**Não execute `docker compose build`** para a stack Dockge.
 
 ## Instalação automatizada
 
-A partir da raiz do pacote:
+A partir da raiz do pacote completo:
 
 ```bash
 sudo ./deployments/dockge/install.sh \
@@ -41,57 +75,40 @@ sudo ./deployments/dockge/install.sh \
   --stack-name argws-financial-platform
 ```
 
-Para somente preparar os arquivos, sem subir containers:
+O instalador prepara o `.env`, gera os segredos, força `APP_PULL_POLICY=always`, aponta API/Web/Gateway para `ghcr.io/wkarts/...:latest`, executa `docker compose pull`, sobe a stack sem build e aguarda `/health/ready`.
 
-```bash
-sudo ./deployments/dockge/install.sh \
-  --domain financeiro.exemplo.com.br \
-  --admin-email admin@exemplo.com.br \
-  --stacks-dir /opt/stacks \
-  --stack-name argws-financial-platform \
-  --skip-up
+## Reverse proxy
+
+O gateway publica somente em loopback. Exemplo:
+
+```env
+GATEWAY_BIND_IP=127.0.0.1
+GATEWAY_PORT=18800
 ```
 
-O instalador:
+No CloudPanel, o reverse proxy deve apontar para:
 
-1. copia a aplicação para o diretório da stack;
-2. cria `.env` a partir do contrato completo;
-3. gera chaves e senhas fortes;
-4. cria diretórios persistentes e arquivos de runtime;
-5. valida o projeto e o Compose;
-6. executa build e sobe a stack, quando `--skip-up` não for informado;
-7. aguarda o endpoint `/health/ready`;
-8. mantém as credenciais iniciais em `.bootstrap-credentials.txt`, com permissão restrita.
+```text
+http://127.0.0.1:18800
+```
 
-## Importação no Dockge
-
-Após `--skip-up`:
-
-1. abra o Dockge;
-2. use **Scan Stacks Folder**;
-3. selecione `argws-financial-platform`;
-4. revise `compose.yaml` e `.env`;
-5. execute o deploy;
-6. confirme que `financial-migrate`, `financial-migrate-tenants` e `financial-bootstrap` finalizam com código zero;
-7. confirme API, workers, beat, web e gateway em execução.
+O vhost deve preservar o cabeçalho `Host` e aceitar o domínio principal, Control Plane, API e wildcard de tenants.
 
 ## Atualização
 
 ```bash
-cd /opt/stacks/argws-financial-platform
 ./deployments/dockge/update.sh
 ```
 
-A atualização executa backup prévio, validação, rebuild com `--pull`, migrations do Control Plane, migrations dos tenants existentes, bootstrap e readiness.
+A atualização realiza backup, volta as imagens ao canal `latest`, executa `docker compose pull`, recria os containers e valida readiness.
 
 ## Rollback
 
 ```bash
-cd /opt/stacks/argws-financial-platform
-./deployments/dockge/rollback.sh /caminho/do/backup.tar.zst
+./deployments/dockge/rollback.sh 1.0.0-rc.3
 ```
 
-O rollback restaura o backup informado e volta a subir a stack. Para rollback apenas de imagem/código sem restauração, preserve uma cópia/tag anterior do repositório e execute o Compose correspondente.
+O rollback troca temporariamente API, Web e Gateway para os aliases imutáveis da versão informada. Para retornar ao canal operacional `latest`, execute `update.sh`.
 
 ## Health check
 
@@ -99,14 +116,14 @@ O rollback restaura o backup informado e volta a subir a stack. Para rollback ap
 ./deployments/dockge/healthcheck.sh
 ```
 
-Também é possível verificar diretamente:
+Ou diretamente:
 
 ```bash
-docker compose --env-file .env -f compose.yaml ps
-curl -fsS http://127.0.0.1:8800/health/live
-curl -fsS http://127.0.0.1:8800/health/ready
+docker compose ps
+curl -fsS http://127.0.0.1:${GATEWAY_PORT}/health/live
+curl -fsS http://127.0.0.1:${GATEWAY_PORT}/health/ready
 ```
 
-## Volumes e backups
+## Persistência
 
-Os caminhos persistentes são definidos no `.env`. Não remova volumes, diretórios de dados ou o arquivo de identidade `age` sem um backup validado. Consulte `BACKUP_RESTORE.md`.
+A stack image-only usa volumes Docker nomeados para PostgreSQL, Redis, RabbitMQ, MinIO, backups, runtime e Celery. Não remova os volumes sem backup validado.
