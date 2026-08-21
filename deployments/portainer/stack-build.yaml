@@ -216,11 +216,13 @@ services:
     restart: "no"
     depends_on:
       financial-minio: {condition: service_healthy}
-    entrypoint: ["/bin/sh", "-ec"]
-    command: |
-      mc alias set local http://financial-minio:9000 "${MINIO_ROOT_USER:-financial}" "${MINIO_ROOT_PASSWORD}";
-      mc mb --ignore-existing "local/${BACKUP_S3_BUCKET:-financial-backups}";
-      mc anonymous set none "local/${BACKUP_S3_BUCKET:-financial-backups}";
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+          mc alias set local http://financial-minio:9000 "${MINIO_ROOT_USER:-financial}" "${MINIO_ROOT_PASSWORD}"
+          mc mb --ignore-existing "local/${BACKUP_S3_BUCKET:-financial-backups}"
+          mc anonymous set none "local/${BACKUP_S3_BUCKET:-financial-backups}"
     networks: [financial-internal]
 
   financial-migrate:
