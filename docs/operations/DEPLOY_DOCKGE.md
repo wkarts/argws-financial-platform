@@ -41,17 +41,50 @@ ghcr.io/wkarts/argws-financial-gateway:latest
 
 As tags versionadas continuam publicadas para auditoria e rollback, mas não são fixadas no `.env` de operação normal.
 
-## Importação manual no Dockge
+## Estrutura da stack e persistência
 
-Na pasta da stack são suficientes:
+Com `FINANCIAL_DATA_ROOT=.`, todos os dados persistentes ficam visíveis dentro da própria pasta da stack:
 
 ```text
 argws-financial-platform/
 ├── compose.yaml
-└── .env
+├── .env
+├── data-postgres/
+├── data-redis/
+├── data-rabbitmq/
+├── data-minio/
+├── data-backups/
+├── data-runtime/
+└── data-celery/
 ```
 
+Os bind mounts são:
+
+```text
+./data-postgres   -> /var/lib/postgresql/data
+./data-redis      -> /data
+./data-rabbitmq   -> /var/lib/rabbitmq
+./data-minio      -> /data
+./data-backups    -> /data/backups
+./data-runtime    -> /data/runtime
+./data-celery     -> /var/lib/celery
+```
+
+A stack Dockge **não usa volumes Docker nomeados para esses dados**. Isso facilita backup físico, auditoria, cópia e migração da stack sem depender de `/var/lib/docker/volumes`.
+
+## Importação manual no Dockge
+
 Use `deployments/dockge/compose.yaml` como `compose.yaml` da stack e `deployments/dockge/.env.example` como base do `.env`.
+
+Garanta:
+
+```env
+APP_PULL_POLICY=always
+FINANCIAL_DATA_ROOT=.
+BACKEND_IMAGE=ghcr.io/wkarts/argws-financial-api:latest
+FRONTEND_IMAGE=ghcr.io/wkarts/argws-financial-web:latest
+GATEWAY_IMAGE=ghcr.io/wkarts/argws-financial-gateway:latest
+```
 
 Depois:
 
@@ -75,7 +108,7 @@ sudo ./deployments/dockge/install.sh \
   --stack-name argws-financial-platform
 ```
 
-O instalador prepara o `.env`, gera os segredos, força `APP_PULL_POLICY=always`, aponta API/Web/Gateway para `ghcr.io/wkarts/...:latest`, executa `docker compose pull`, sobe a stack sem build e aguarda `/health/ready`.
+O instalador prepara o `.env`, gera os segredos, força `APP_PULL_POLICY=always`, define `FINANCIAL_DATA_ROOT=.`, aponta API/Web/Gateway para `ghcr.io/wkarts/...:latest`, cria os diretórios `data-*`, executa `docker compose pull`, sobe a stack sem build e aguarda `/health/ready`.
 
 ## Reverse proxy
 
@@ -100,15 +133,15 @@ O vhost deve preservar o cabeçalho `Host` e aceitar o domínio principal, Contr
 ./deployments/dockge/update.sh
 ```
 
-A atualização realiza backup, volta as imagens ao canal `latest`, executa `docker compose pull`, recria os containers e valida readiness.
+A atualização realiza backup, preserva os diretórios `data-*`, volta as imagens ao canal `latest`, executa `docker compose pull`, recria os containers e valida readiness.
 
 ## Rollback
 
 ```bash
-./deployments/dockge/rollback.sh 1.0.0-rc.3
+./deployments/dockge/rollback.sh 1.0.0-rc.4
 ```
 
-O rollback troca temporariamente API, Web e Gateway para os aliases imutáveis da versão informada. Para retornar ao canal operacional `latest`, execute `update.sh`.
+O rollback troca temporariamente API, Web e Gateway para os aliases imutáveis da versão informada, mantendo os mesmos diretórios `data-*`. Para retornar ao canal operacional `latest`, execute `update.sh`.
 
 ## Health check
 
@@ -124,6 +157,6 @@ curl -fsS http://127.0.0.1:${GATEWAY_PORT}/health/live
 curl -fsS http://127.0.0.1:${GATEWAY_PORT}/health/ready
 ```
 
-## Persistência
+## Segurança operacional
 
-A stack image-only usa volumes Docker nomeados para PostgreSQL, Redis, RabbitMQ, MinIO, backups, runtime e Celery. Não remova os volumes sem backup validado.
+Não apague `data-postgres`, `data-redis`, `data-rabbitmq`, `data-minio`, `data-backups`, `data-runtime` ou `data-celery` durante update/redeploy. Antes de mover ou excluir a pasta da stack, valide backup e restauração.
