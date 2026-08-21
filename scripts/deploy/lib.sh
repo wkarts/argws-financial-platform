@@ -6,6 +6,14 @@ warn() { printf '\033[1;33m[AVISO]\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31m[ERRO]\033[0m %s\n' "$*" >&2; exit 1; }
 require_cmd() { command -v "$1" >/dev/null 2>&1 || die "Comando obrigatório ausente: $1"; }
 
+canonical_version() {
+  local root="$1" version
+  [[ -f "$root/VERSION" ]] || die "Arquivo VERSION ausente em $root"
+  version="$(tr -d '[:space:]' < "$root/VERSION")"
+  [[ -n "$version" ]] || die "Arquivo VERSION vazio em $root"
+  printf '%s' "$version"
+}
+
 set_env() {
   local file="$1" key="$2" value="$3"
   python3 - "$file" "$key" "$value" <<'PY'
@@ -28,6 +36,14 @@ PY
 get_env() {
   local file="$1" key="$2"
   awk -F= -v k="$key" '$1==k {sub($1 FS,""); print; exit}' "$file"
+}
+
+sync_runtime_version() {
+  local root="$1" env_file="$2" version
+  version="$(canonical_version "$root")"
+  set_env "$env_file" APP_VERSION "$version"
+  set_env "$env_file" VITE_APP_VERSION "$version"
+  log "Versão sincronizada do arquivo VERSION: $version"
 }
 
 sync_project() {
@@ -108,6 +124,7 @@ prepare_env() {
   set_env "$env_file" VITE_CONTROL_PLANE_HOST "control.$domain"
   set_env "$env_file" TRUSTED_HOSTS "$domain,control.$domain,api.$domain,.$domain,localhost,127.0.0.1"
   set_env "$env_file" CORS_ORIGINS "https://$domain,https://control.$domain"
+  sync_runtime_version "$root" "$env_file"
   python3 "$root/scripts/generate_secrets.py" --env "$env_file"
   chmod 0600 "$env_file"
   ensure_runtime_files "$root" "$env_file"
@@ -125,6 +142,7 @@ validate_project() {
 backup_before_update() {
   local root="$1" env_file="${2:-.env}"
   cd "$root"
+  sync_runtime_version "$root" "$env_file"
   if compose_cmd "$env_file" ps --status running 2>/dev/null | grep -q financial-api; then
     log "Gerando backup antes da atualização"
     compose_cmd "$env_file" run --rm financial-api python -m app.cli backup
