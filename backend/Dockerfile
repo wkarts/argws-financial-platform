@@ -16,11 +16,21 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 COPY backend/ ./
 COPY scripts/ /workspace/scripts/
 
+# O runtime usa UID não-root estável. O GID 0 é intencional: os bind mounts
+# preparados pelo financial-storage-init são root:root 0770. Assim o processo
+# continua sem privilégios de root (UID 10001), mas consegue acessar os
+# diretórios persistentes sem abrir permissões 0777 no host.
 RUN useradd --create-home --uid 10001 appuser \
-    && mkdir -p /data/backups /data/acme /data/cloudpanel/domains \
-    && chown -R appuser:appuser /app /data /workspace
+    && mkdir -p \
+        /data/backups \
+        /data/runtime \
+        /data/acme \
+        /data/cloudpanel/domains \
+        /var/lib/celery \
+    && chown -R appuser:root /app /data /workspace /var/lib/celery \
+    && chmod 0770 /data/backups /data/runtime /var/lib/celery
 
-USER appuser
+USER 10001:0
 EXPOSE 8000
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
