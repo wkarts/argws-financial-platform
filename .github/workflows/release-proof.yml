@@ -61,6 +61,7 @@ jobs:
             "ARGWS-Financial-Platform-v${version}.tar.gz"
             "ARGWS-Financial-Platform-v${version}-SHA256SUMS.txt"
             "ARGWS-Financial-Platform-v${version}-PACKAGE_REPORT.json"
+            "ARGWS-Financial-Platform-v${version}-Dockge.zip"
             "CONTAINER_IMAGES.txt"
             "VALIDATION_REPORT.json"
             "VALIDATION_REPORT.md"
