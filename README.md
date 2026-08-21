@@ -2,11 +2,7 @@
 
 **ARGWS Financial Platform** é uma plataforma SaaS financeira multitenant, web/PWA e Docker-first para gestão de cobranças e recebíveis. O projeto foi construído com **Python 3.13, FastAPI, SQLAlchemy 2, PostgreSQL, Redis, RabbitMQ/Celery, Vue 3, TypeScript, Tailwind CSS e MinIO/S3**.
 
-A versão atual é:
-
-```text
-1.0.0-rc.2
-```
+A versão atual da aplicação é definida exclusivamente pelo arquivo [`VERSION`](VERSION). Os scripts de instalação sincronizam esse valor automaticamente em `APP_VERSION`; o Vite injeta o mesmo valor em `VITE_APP_VERSION`. As imagens operacionais do produto usam sempre a tag `:latest`.
 
 ## Índice operacional da entrega
 
@@ -87,13 +83,13 @@ O hostname é a autoridade para resolução do tenant. Hosts desconhecidos não 
 ### Operação
 
 - Docker Compose com build pelo fonte;
-- Docker Compose de produção por imagens;
+- Docker Compose de produção por imagens `:latest`;
 - Dockge;
 - CloudPanel;
 - Portainer;
 - Cloudflare/ACME DNS-01 opcional;
 - Prometheus e Grafana opcionais;
-- GitHub Actions para CI, imagens e release.
+- GitHub Actions para CI, imagens, artefatos e release.
 
 ## Recursos financeiros
 
@@ -154,7 +150,7 @@ Cada pacote operacional possui ambiente de exemplo, Compose/stack, instalação,
   --mode source
 ```
 
-Modo baseado em imagens:
+Modo baseado em imagens `latest` publicadas no GHCR:
 
 ```bash
 ./deployments/docker/install.sh \
@@ -281,7 +277,7 @@ bash -n deployments/dockge/install.sh
 make package
 ```
 
-O comando gera ZIP, TAR.ZST, checksums SHA-256 e relatório JSON em `release-artifacts/`, excluindo segredos, caches, `.git` e dados de runtime.
+O comando gera ZIP, TAR.ZST, TAR.GZ, checksums SHA-256 e relatório JSON em `release-artifacts/`, excluindo segredos, caches, `.git` e dados de runtime.
 
 ## Backup e restore
 
