@@ -7,6 +7,8 @@
 - adicionado asset dedicado `ARGWS-Financial-Platform-v<VERSAO>-Dockge.zip` para instalação direta no Dockge;
 - o bundle Dockge coloca o `compose.yaml` **image-only** na raiz da stack, evitando que o Dockge selecione por engano o Compose de desenvolvimento/build do pacote completo;
 - o pacote dedicado inclui `.env.example`, README, manifesto e os diretórios persistentes `data-*`;
+- imagens `api`, `web` e `gateway` passam a ficar fixas no Compose Dockge como `ghcr.io/wkarts/...:latest`;
+- `pull_policy: always` passa a ficar fixo no Compose Dockge, impedindo que `.env` legado com `APP_PULL_POLICY=build` reative build local;
 - CI passa a gerar e validar o bundle Dockge em toda Pull Request;
 - workflow de Release passa a publicar e verificar o bundle Dockge como asset obrigatório;
 - workflow de verificação de Release deixa de gravar diretamente na `main` e passa a publicar apenas um artefato de prova, respeitando o fluxo branch → PR → merge;
