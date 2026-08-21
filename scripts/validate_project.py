@@ -204,11 +204,24 @@ def check_compose() -> None:
     }
     check_compose_file(ROOT / "compose.yaml", ROOT / ".env.example", source_services, queues)
     check_compose_file(ROOT / "deployments/docker/compose.images.yaml", ROOT / "deployments/docker/.env.example", image_services, queues)
+    check_compose_file(ROOT / "deployments/dockge/compose.yaml", ROOT / "deployments/dockge/.env.example", image_services, queues)
     check_compose_file(ROOT / "deployments/portainer/stack.yaml", ROOT / "deployments/portainer/.env.example", image_services, queues)
+
     canonical = (ROOT / "compose.yaml").read_bytes()
-    for copy in (ROOT / "deployments/dockge/compose.yaml", ROOT / "deployments/cloudpanel/compose.yaml"):
-        if copy.read_bytes() != canonical:
-            error(f"Compose divergente do canônico: {copy.relative_to(ROOT)}")
+    cloudpanel = ROOT / "deployments/cloudpanel/compose.yaml"
+    if cloudpanel.read_bytes() != canonical:
+        error(f"Compose divergente do canônico: {cloudpanel.relative_to(ROOT)}")
+
+    dockge_text = (ROOT / "deployments/dockge/compose.yaml").read_text(encoding="utf-8")
+    if re.search(r"^\s+build:\s*$", dockge_text, re.MULTILINE):
+        error("A stack Dockge não pode depender de build local")
+    if "GATEWAY_IMAGE" not in dockge_text:
+        error("Stack Dockge não referencia a imagem publicada do gateway")
+    if "ghcr.io/wkarts/argws-financial-api:latest" not in dockge_text:
+        error("Stack Dockge não possui fallback GHCR latest para a API")
+    if re.search(r"^\s+APP_VERSION:\s*", dockge_text, re.MULTILINE):
+        error("Stack Dockge não deve sobrescrever a versão embutida nas imagens")
+
     portainer_text = (ROOT / "deployments/portainer/stack.yaml").read_text(encoding="utf-8")
     if re.search(r"^\s+build:\s*$", portainer_text, re.MULTILINE):
         error("A stack Portainer de imagens não pode depender de build local")
