@@ -2,19 +2,74 @@ name: Release
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: write
   packages: write
 
+concurrency:
+  group: release-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      should_release: ${{ steps.release.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: release
+        name: Resolve version and release state
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || {
+            echo "::error::VERSION inválida: $version"
+            exit 1
+          }
+
+          tag="v${version}"
+          prerelease=false
+          [[ "$version" == *-* ]] && prerelease=true
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            [[ "${GITHUB_REF_NAME}" == "$tag" ]] || {
+              echo "::error::A tag ${GITHUB_REF_NAME} não corresponde ao VERSION=${version}"
+              exit 1
+            }
+            should_release=true
+          elif git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "Tag ${tag} já existe; nenhuma nova release será publicada para este commit."
+            should_release=false
+          else
+            should_release=true
+          fi
+
+          {
+            echo "version=${version}"
+            echo "tag=${tag}"
+            echo "prerelease=${prerelease}"
+            echo "should_release=${should_release}"
+          } >> "$GITHUB_OUTPUT"
+
   validate:
+    needs: prepare
+    if: needs.prepare.outputs.should_release == 'true'
     uses: ./.github/workflows/ci.yml
 
   images:
     runs-on: ubuntu-latest
-    needs: validate
+    needs: [prepare, validate]
+    if: needs.prepare.outputs.should_release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -42,10 +97,10 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/argws-financial-${{ matrix.name }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ needs.prepare.outputs.version }}
+            type=raw,value=rc,enable=${{ needs.prepare.outputs.prerelease == 'true' }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.prerelease == 'false' }}
             type=sha
-            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -55,29 +110,69 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: mode=max
           sbom: true
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          cache-from: type=gha,scope=release-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.name }}
 
   source:
     runs-on: ubuntu-latest
-    needs: images
+    needs: [prepare, images]
+    if: needs.prepare.outputs.should_release == 'true'
     steps:
       - uses: actions/checkout@v4
-      - name: Package source and deployment bundles
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          test "$(cat VERSION)" = "$version"
-          python scripts/package_release.py --output-dir release-artifacts
-      - uses: softprops/action-gh-release@v2
         with:
+          fetch-depth: 0
+
+      - name: Package source and deployment bundles
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          version="${{ needs.prepare.outputs.version }}"
+          test "$(tr -d '[:space:]' < VERSION)" = "$version"
+          python scripts/package_release.py --output-dir release-artifacts
+
+          cat > release-artifacts/CONTAINER_IMAGES.txt <<EOF
+          ARGWS Financial Platform ${version}
+
+          ghcr.io/${{ github.repository_owner }}/argws-financial-api:${version}
+          ghcr.io/${{ github.repository_owner }}/argws-financial-web:${version}
+          ghcr.io/${{ github.repository_owner }}/argws-financial-gateway:${version}
+          ghcr.io/${{ github.repository_owner }}/argws-financial-acme:${version}
+          ghcr.io/${{ github.repository_owner }}/argws-financial-cloudpanel-agent:${version}
+          EOF
+
+      - name: Create version tag when release originated from main
+        if: github.ref_type != 'tag'
+        shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} já existe."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" "${GITHUB_SHA}" -m "ARGWS Financial Platform ${TAG}"
+          git push origin "${TAG}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ARGWS Financial Platform ${{ needs.prepare.outputs.tag }}
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
           generate_release_notes: true
           body_path: RELEASE_NOTES.md
+          fail_on_unmatched_files: true
           files: |
             release-artifacts/ARGWS-Financial-Platform-v*.zip
             release-artifacts/ARGWS-Financial-Platform-v*.tar.zst
             release-artifacts/ARGWS-Financial-Platform-v*.tar.gz
             release-artifacts/ARGWS-Financial-Platform-v*-SHA256SUMS.txt
             release-artifacts/ARGWS-Financial-Platform-v*-PACKAGE_REPORT.json
+            release-artifacts/CONTAINER_IMAGES.txt
             VALIDATION_REPORT.json
             VALIDATION_REPORT.md
