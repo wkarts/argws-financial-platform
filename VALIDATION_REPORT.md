@@ -24,11 +24,11 @@ Stack Portainer:                    obrigatória
 ## Versionamento
 
 - `VERSION` é a única fonte de verdade;
-- `APP_VERSION` é sincronizada automaticamente no bootstrap/deploy;
-- `VITE_APP_VERSION` é injetada pelo Vite a partir de `VERSION`;
+- backend e frontend leem a versão empacotada nas imagens publicadas;
 - `frontend/package.json` não duplica a versão da aplicação;
 - os Dockerfiles carregam `VERSION` dentro das imagens;
 - os exemplos `.env` deixam `APP_VERSION` e `VITE_APP_VERSION` vazios;
+- o Compose Dockge não injeta `APP_VERSION`, evitando sobrescrever a versão da imagem;
 - as imagens operacionais usam sempre `:latest`;
 - o pipeline também publica alias imutável da versão e SHA para auditoria/rollback, sem tornar o runtime dependente deles.
 
@@ -53,11 +53,12 @@ Também são verificados:
 
 - referências de variáveis dos arquivos Compose;
 - presença das filas e serviços obrigatórios;
-- sincronismo entre o Compose canônico e Dockge/CloudPanel;
+- Compose de código-fonte separado dos Composes image-only;
+- Dockge sem `build:` local e com imagens GHCR `:latest`;
 - correspondência entre chamadas Axios e rotas FastAPI;
 - cabeças Alembic e caminhos portáveis;
 - ausência de `.env`, credenciais bootstrap e identidades reais na distribuição;
-- consistência dos exemplos de ambiente development, staging, production e Portainer;
+- consistência dos exemplos de ambiente;
 - política de imagens `:latest` para runtime;
 - empacotamento limpo com manifest e verificação de integridade.
 
