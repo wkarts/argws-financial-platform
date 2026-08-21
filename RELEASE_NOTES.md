@@ -47,9 +47,9 @@ could not find .../frontend: no such file or directory
 
 A partir desta release, para Dockge o asset correto é explicitamente o arquivo `-Dockge.zip`.
 
-## Imagens operacionais
+## Imagens operacionais protegidas contra `.env` legado
 
-O bundle usa sempre:
+O Compose Dockge fixa diretamente:
 
 ```text
 ghcr.io/wkarts/argws-financial-api:latest
@@ -57,7 +57,9 @@ ghcr.io/wkarts/argws-financial-web:latest
 ghcr.io/wkarts/argws-financial-gateway:latest
 ```
 
-com:
+com `pull_policy: always` no próprio Compose. Assim, valores antigos como `APP_PULL_POLICY=build` ou `BACKEND_IMAGE=argws-financial-api:latest` em um `.env` reaproveitado não conseguem reativar build local nem substituir as imagens oficiais do runtime Dockge.
+
+O `.env.example` continua documentando:
 
 ```env
 APP_PULL_POLICY=always
@@ -84,9 +86,9 @@ Nenhum desses dados depende de volumes Docker nomeados na stack Dockge.
 
 ## Validação e CI
 
-A CI agora também executa `scripts/package_dockge_stack.py` e valida que o ZIP dedicado é gerado corretamente. O workflow de Release só conclui se o bundle Dockge existir e for publicado junto com os demais assets.
+A CI agora também executa `scripts/package_dockge_stack.py` e valida que o ZIP dedicado é gerado corretamente. `scripts/validate_dockge_runtime.py` verifica ausência de `build:`, bind mounts `data-*`, imagens GHCR `:latest` fixas e `pull_policy: always` fixo.
 
-A verificação pós-release passa a validar nove assets, incluindo o novo ZIP Dockge.
+O workflow de Release só conclui se o bundle Dockge existir e for publicado junto com os demais assets. A verificação pós-release passa a validar nove assets, incluindo o novo ZIP Dockge.
 
 ## Política de alterações no repositório
 
