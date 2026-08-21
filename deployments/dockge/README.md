@@ -2,6 +2,18 @@
 
 A stack Dockge é **image-only**: ela consome exclusivamente as imagens publicadas no GHCR e não precisa compilar backend/frontend no servidor.
 
+## Pacote recomendado
+
+Nas Releases, use o arquivo dedicado:
+
+```text
+ARGWS-Financial-Platform-v<VERSAO>-Dockge.zip
+```
+
+Esse pacote já traz `compose.yaml` image-only na raiz da pasta `argws-financial-platform/`, além de `.env.example`, README, manifesto e diretórios `data-*`.
+
+**Não extraia o pacote completo de código-fonte diretamente dentro da pasta da stack esperando que o Dockge use o Compose correto.** O pacote completo mantém o `compose.yaml` de desenvolvimento/build na raiz. Para Dockge, use sempre o bundle `-Dockge.zip` ou copie explicitamente `deployments/dockge/compose.yaml` para `compose.yaml` na raiz da stack.
+
 ## Estrutura operacional da stack
 
 Com `FINANCIAL_DATA_ROOT=.`, a persistência fica visível dentro da própria pasta da stack:
@@ -19,15 +31,7 @@ argws-financial-platform/
 └── data-celery/
 ```
 
-O `compose.yaml` deve ser o arquivo `deployments/dockge/compose.yaml` desta distribuição. O instalador copia esse arquivo para a raiz da stack para que `./data-*` seja resolvido exatamente no diretório gerenciado pelo Dockge.
-
-Não são necessários na pasta da stack para executar os containers:
-
-- `backend/`;
-- `frontend/`;
-- Dockerfiles;
-- `infrastructure/nginx/`;
-- código-fonte da aplicação.
+O `compose.yaml` do Dockge não contém `build:` e não referencia `backend/`, `frontend/` ou Dockerfiles locais.
 
 ## Imagens operacionais
 
@@ -53,21 +57,19 @@ O Dockge não usa volumes nomeados para os dados principais. Cada serviço grava
 ./data-celery     -> /var/lib/celery
 ```
 
-Isso permite auditar, copiar, migrar e incluir a pasta inteira da stack em rotinas de backup sem depender de `/var/lib/docker/volumes`.
-
 Se quiser mover todo o conjunto para outro diretório-base, altere `FINANCIAL_DATA_ROOT`; o padrão Dockge é `.`.
 
 ## Primeira instalação
 
-1. Copie `deployments/dockge/compose.yaml` para `compose.yaml` na raiz da stack do Dockge.
-2. Copie `deployments/dockge/.env.example` para `.env`.
+1. Extraia o bundle `ARGWS-Financial-Platform-v<VERSAO>-Dockge.zip` no diretório de stacks do Dockge.
+2. Renomeie `.env.example` para `.env`.
 3. Ajuste domínio, porta e segredos.
-4. Mantenha `FINANCIAL_DATA_ROOT=.` para usar `./data-*`.
+4. Mantenha `FINANCIAL_DATA_ROOT=.`.
 5. Valide com `docker compose config`.
 6. Execute `docker compose pull`.
 7. Execute `docker compose up -d`.
 
-O Dockge não deve executar `docker compose build` para esta stack.
+O Dockge não deve executar `docker compose build` para esta stack. Se aparecer `[+] Building`, o arquivo `compose.yaml` em uso não é o bundle Dockge correto.
 
 ## Reverse proxy
 
@@ -79,17 +81,6 @@ O gateway publica somente em loopback:
 
 O CloudPanel deve criar um reverse proxy para esse endereço e preservar o cabeçalho `Host`. O mesmo gateway atende plataforma, Control Plane, API e tenants por hostname.
 
-Exemplo para `financeiro.exemplo.com.br`:
-
-```text
-financeiro.exemplo.com.br
-control.financeiro.exemplo.com.br
-api.financeiro.exemplo.com.br
-*.financeiro.exemplo.com.br
-            ↓
-http://127.0.0.1:8800
-```
-
 ## Atualização
 
 `deployments/dockge/update.sh` reaplica o Compose image-only na raiz, preserva os diretórios `data-*`, executa backup, `docker compose pull` e recria os containers usando `:latest`.
@@ -97,7 +88,7 @@ http://127.0.0.1:8800
 ## Rollback
 
 ```bash
-./deployments/dockge/rollback.sh 1.0.0-rc.3
+./deployments/dockge/rollback.sh 1.0.0-rc.5
 ```
 
 O rollback troca temporariamente API, Web e Gateway para os aliases imutáveis daquela release sem alterar os diretórios persistentes. Depois, `update.sh` volta ao canal `latest`.
