@@ -52,15 +52,14 @@ require_cmd python3
 
 [[ -f "$ENV_FILE" ]] || cp "$ROOT/.env.example" "$ENV_FILE"
 prepare_env "$ROOT" "$ROOT/.env.example" "$ENV_FILE" "$DOMAIN" "$EMAIL"
+version="$(canonical_version "$ROOT")"
 
-version="$(tr -d '[:space:]' < "$ROOT/VERSION")"
-set_env "$ENV_FILE" APP_VERSION "$version"
 set_env "$ENV_FILE" APP_PULL_POLICY always
-set_env "$ENV_FILE" BACKEND_IMAGE "ghcr.io/wkarts/argws-financial-api:$version"
-set_env "$ENV_FILE" FRONTEND_IMAGE "ghcr.io/wkarts/argws-financial-web:$version"
-set_env "$ENV_FILE" GATEWAY_IMAGE "ghcr.io/wkarts/argws-financial-gateway:$version"
-set_env "$ENV_FILE" ACME_IMAGE "ghcr.io/wkarts/argws-financial-acme:$version"
-set_env "$ENV_FILE" CLOUDPANEL_AGENT_IMAGE "ghcr.io/wkarts/argws-financial-cloudpanel-agent:$version"
+set_env "$ENV_FILE" BACKEND_IMAGE "ghcr.io/wkarts/argws-financial-api:latest"
+set_env "$ENV_FILE" FRONTEND_IMAGE "ghcr.io/wkarts/argws-financial-web:latest"
+set_env "$ENV_FILE" GATEWAY_IMAGE "ghcr.io/wkarts/argws-financial-gateway:latest"
+set_env "$ENV_FILE" ACME_IMAGE "ghcr.io/wkarts/argws-financial-acme:latest"
+set_env "$ENV_FILE" CLOUDPANEL_AGENT_IMAGE "ghcr.io/wkarts/argws-financial-cloudpanel-agent:latest"
 set_env "$ENV_FILE" RCLONE_CONFIG_PATH "/opt/argws-financial-platform/secrets/rclone.conf"
 set_env "$ENV_FILE" BACKUP_AGE_IDENTITY_PATH "/opt/argws-financial-platform/secrets/backup-age-identity.txt"
 chmod 600 "$ENV_FILE"
@@ -68,7 +67,8 @@ validate_project "$ROOT" true
 
 if $PREPARE_ONLY; then
   log "Ambiente Portainer preparado e validado: $ENV_FILE"
-  log "Release: $version"
+  log "Versão da aplicação: $version"
+  log "Imagens: GHCR latest"
   log "Stack: $HERE/stack.yaml"
   exit 0
 fi
@@ -98,5 +98,6 @@ $INSECURE && args+=(--insecure)
 
 python3 "$ROOT/scripts/portainer_deploy.py" "${args[@]}"
 log "Stack Portainer criada/atualizada: $STACK_NAME"
-log "Release: $version"
+log "Versão da aplicação: $version"
+log "Imagens: GHCR latest"
 log "Credenciais iniciais: $(dirname "$ENV_FILE")/.bootstrap-credentials.txt"
