@@ -28,7 +28,12 @@ def parse_env(path: Path) -> dict[str, str]:
 
 def volume_source(item: object) -> str | None:
     if isinstance(item, str):
-        return item.split(":", 1)[0]
+        # Compose short syntax is SOURCE:TARGET[:MODE]. Use rsplit because
+        # ${FINANCIAL_DATA_ROOT:-.} itself contains a colon.
+        parts = item.rsplit(":", 2)
+        if len(parts) >= 2:
+            return parts[0]
+        return item
     if isinstance(item, dict):
         source = item.get("source")
         return str(source) if source is not None else None
