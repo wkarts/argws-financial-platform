@@ -4,7 +4,19 @@
 
 Executar a ARGWS Financial Platform no Dockge usando **somente imagens publicadas no GHCR**, sem compilar backend/frontend no servidor e sem exigir o código-fonte dentro da pasta da stack.
 
-## Arquivos
+## Pacote recomendado da Release
+
+Para instalação manual no Dockge, use o asset dedicado:
+
+```text
+ARGWS-Financial-Platform-v<VERSAO>-Dockge.zip
+```
+
+Ele é diferente do pacote completo de código-fonte. O bundle Dockge contém `compose.yaml` image-only na raiz da pasta `argws-financial-platform/`, `.env.example`, README, manifesto e os diretórios `data-*`.
+
+**Não use o `compose.yaml` da raiz do pacote completo de código-fonte como stack Dockge.** Esse Compose é destinado a desenvolvimento/build e pode tentar localizar `backend/` e `frontend/`. Se o terminal mostrar `[+] Building`, a stack não está usando o Compose Dockge correto.
+
+## Arquivos de origem do bundle
 
 ```text
 deployments/dockge/
@@ -74,7 +86,7 @@ A stack Dockge **não usa volumes Docker nomeados para esses dados**. Isso facil
 
 ## Importação manual no Dockge
 
-Use `deployments/dockge/compose.yaml` como `compose.yaml` da stack e `deployments/dockge/.env.example` como base do `.env`.
+Preferencialmente extraia o bundle `-Dockge.zip` no diretório de stacks. Se estiver usando o repositório completo, copie explicitamente `deployments/dockge/compose.yaml` para `compose.yaml` na pasta da stack e `deployments/dockge/.env.example` para `.env`.
 
 Garanta:
 
@@ -94,7 +106,7 @@ docker compose pull
 docker compose up -d
 ```
 
-**Não execute `docker compose build`** para a stack Dockge.
+Não execute `docker compose build` para a stack Dockge.
 
 ## Instalação automatizada
 
@@ -138,7 +150,7 @@ A atualização realiza backup, preserva os diretórios `data-*`, volta as image
 ## Rollback
 
 ```bash
-./deployments/dockge/rollback.sh 1.0.0-rc.4
+./deployments/dockge/rollback.sh 1.0.0-rc.5
 ```
 
 O rollback troca temporariamente API, Web e Gateway para os aliases imutáveis da versão informada, mantendo os mesmos diretórios `data-*`. Para retornar ao canal operacional `latest`, execute `update.sh`.
