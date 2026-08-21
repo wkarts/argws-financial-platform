@@ -62,6 +62,7 @@ jobs:
           python-version: '3.13'
       - run: pip install PyYAML SQLAlchemy pydantic pydantic-settings cryptography email-validator
       - run: python scripts/validate_project.py
+      - run: python scripts/validate_dockge_runtime.py
       - run: cp .env.example .env
       - run: python scripts/generate_secrets.py --env .env
       - run: docker compose config --quiet
