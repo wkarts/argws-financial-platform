@@ -1,20 +1,89 @@
 version: 2
+
 updates:
   - package-ecosystem: pip
     directory: /backend
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+      day: monday
+      time: "06:00"
+      timezone: America/Bahia
+    open-pull-requests-limit: 1
+    rebase-strategy: disabled
+    groups:
+      python-non-major:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
   - package-ecosystem: npm
     directory: /frontend
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+      day: monday
+      time: "06:15"
+      timezone: America/Bahia
+    open-pull-requests-limit: 1
+    rebase-strategy: disabled
+    groups:
+      frontend-non-major:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: tailwindcss
+        versions:
+          - ">=4"
+
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+      day: monday
+      time: "06:30"
+      timezone: America/Bahia
+    open-pull-requests-limit: 1
+    rebase-strategy: disabled
+    groups:
+      docker-non-major:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+      day: monday
+      time: "06:45"
+      timezone: America/Bahia
+    open-pull-requests-limit: 1
+    rebase-strategy: disabled
+    groups:
+      actions-non-major:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
