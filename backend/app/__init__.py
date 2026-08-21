@@ -1,3 +1,5 @@
 """ARGWS Financial Platform."""
 
-__version__ = "1.0.0-rc.2"
+from app.version import get_app_version
+
+__version__ = get_app_version()
