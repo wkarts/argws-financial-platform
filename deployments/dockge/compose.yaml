@@ -3,6 +3,7 @@ name: ${COMPOSE_PROJECT_NAME:-argws-financial-platform}
 # Stack Dockge de produção: image-only.
 # Não requer backend/, frontend/, Dockerfiles ou código-fonte na pasta da stack.
 # Todos os dados persistentes ficam em ./data-* (ou sob FINANCIAL_DATA_ROOT, se alterado).
+# Imagens e pull_policy são fixos em GHCR :latest para ignorar .env legado de build.
 # APP_VERSION não é injetado aqui: cada imagem lê a versão canônica embutida no arquivo VERSION.
 
 x-api-env: &api-env
@@ -108,7 +109,7 @@ x-api-env: &api-env
   PROMETHEUS_ENABLED: ${PROMETHEUS_ENABLED:-true}
 
 x-api-common: &api-common
-  image: ${BACKEND_IMAGE:-ghcr.io/wkarts/argws-financial-api:latest}
+  image: ghcr.io/wkarts/argws-financial-api:latest
   pull_policy: always
   restart: unless-stopped
   environment: *api-env
@@ -303,7 +304,7 @@ services:
       financial-api: {condition: service_healthy}
 
   financial-web:
-    image: ${FRONTEND_IMAGE:-ghcr.io/wkarts/argws-financial-web:latest}
+    image: ghcr.io/wkarts/argws-financial-web:latest
     pull_policy: always
     restart: unless-stopped
     healthcheck:
@@ -314,7 +315,7 @@ services:
     networks: [financial-internal]
 
   financial-gateway:
-    image: ${GATEWAY_IMAGE:-ghcr.io/wkarts/argws-financial-gateway:latest}
+    image: ghcr.io/wkarts/argws-financial-gateway:latest
     pull_policy: always
     restart: unless-stopped
     depends_on:
