@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.0.0-rc.5 — 2026-08-21
+
+### Corrigido
+
+- formalizado o fluxo de correção via branch + Pull Request antes do merge em `main`;
+- stack Dockge consolidada como **image-only**, sem dependência de `backend/`, `frontend/`, Dockerfiles ou build local;
+- persistência principal do Dockge padronizada em bind mounts visíveis `./data-*`;
+- `FINANCIAL_DATA_ROOT=.` definido como padrão do ambiente Dockge;
+- PostgreSQL, Redis, RabbitMQ, MinIO, backups, runtime e Celery passam a permanecer diretamente na pasta da stack;
+- removidos volumes Docker nomeados da stack Dockge para esses dados;
+- adicionado `scripts/validate_dockge_runtime.py` para impedir regressão para build local, named volumes ou caminhos fora de `data-*`;
+- CI passa a executar a validação específica do runtime Dockge antes do deploy/release;
+- documentação operacional corrigida para refletir o layout real da persistência.
+
+### Estrutura operacional
+
+```text
+argws-financial-platform/
+├── compose.yaml
+├── .env
+├── data-postgres/
+├── data-redis/
+├── data-rabbitmq/
+├── data-minio/
+├── data-backups/
+├── data-runtime/
+└── data-celery/
+```
+
 ## 1.0.0-rc.4 — 2026-08-21
 
 ### Corrigido
