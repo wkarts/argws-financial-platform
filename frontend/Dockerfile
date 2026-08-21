@@ -10,9 +10,9 @@ COPY VERSION /VERSION
 COPY frontend/package.json ./
 RUN npm install --no-audit --no-fund
 COPY frontend/ ./
-# vite.config.ts lê /VERSION através do caminho relativo ../VERSION; a versão
-# publicada nunca precisa ser duplicada em ARG/ENV do Dockerfile.
-RUN cp /VERSION ../VERSION && npm run build
+# vite.config.ts lê ../VERSION. No container, com WORKDIR=/app, isso resolve
+# para /VERSION; localmente resolve para a raiz do repositório.
+RUN npm run build
 
 FROM nginx:1.27-alpine
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
