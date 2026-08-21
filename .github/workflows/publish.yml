@@ -22,7 +22,6 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
-      prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
       - id: version
@@ -35,11 +34,8 @@ jobs:
             echo "::error::Versão inválida em VERSION: $version"
             exit 1
           }
-          prerelease=false
-          [[ "$version" == *-* ]] && prerelease=true
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=v$version" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
   validate:
     uses: ./.github/workflows/ci.yml
@@ -106,7 +102,6 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
-      RELEASE_PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -114,6 +109,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
+
       - name: Install validation and packaging dependencies
         shell: bash
         run: |
@@ -122,6 +118,7 @@ jobs:
           pip install PyYAML SQLAlchemy pydantic pydantic-settings cryptography email-validator
           sudo apt-get update
           sudo apt-get install -y zstd
+
       - name: Validate and package release
         shell: bash
         run: |
@@ -153,6 +150,7 @@ jobs:
           test -s "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}.tar.gz"
           test -s "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}-SHA256SUMS.txt"
           test -s "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}-PACKAGE_REPORT.json"
+
       - name: Upload GitHub Actions artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -164,17 +162,11 @@ jobs:
             VALIDATION_REPORT.md
           if-no-files-found: error
           retention-days: 30
-      - name: Repair version tag when Release is missing
+
+      - name: Synchronize version tag with published commit
         shell: bash
         run: |
           set -Eeuo pipefail
-
-          # Uma tag sem objeto GitHub Release é estado parcial e pode ser reparada.
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "GitHub Release já existe; a tag não será movida."
-            exit 0
-          fi
-
           git fetch --tags --force
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -182,7 +174,7 @@ jobs:
           if git rev-parse -q --verify "refs/tags/$RELEASE_TAG" >/dev/null; then
             current_target="$(git rev-list -n 1 "$RELEASE_TAG")"
             if [[ "$current_target" != "$GITHUB_SHA" ]]; then
-              echo "Reparando tag órfã $RELEASE_TAG: $current_target -> $GITHUB_SHA"
+              echo "Sincronizando $RELEASE_TAG: $current_target -> $GITHUB_SHA"
               git tag -fa "$RELEASE_TAG" "$GITHUB_SHA" -m "ARGWS Financial Platform $RELEASE_TAG"
               git push --force origin "refs/tags/$RELEASE_TAG"
             fi
@@ -190,7 +182,8 @@ jobs:
             git tag -a "$RELEASE_TAG" "$GITHUB_SHA" -m "ARGWS Financial Platform $RELEASE_TAG"
             git push origin "refs/tags/$RELEASE_TAG"
           fi
-      - name: Create or repair GitHub Release
+
+      - name: Create or promote GitHub Release as normal/latest
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -213,31 +206,51 @@ jobs:
             }
           done
 
-          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            args=(
-              release create "$RELEASE_TAG"
-              --repo "$GITHUB_REPOSITORY"
-              --verify-tag
-              --title "ARGWS Financial Platform $RELEASE_TAG"
-              --notes-file RELEASE_NOTES.md
-            )
-            if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
-              args+=(--prerelease)
-            else
-              args+=(--latest)
-            fi
-            gh "${args[@]}"
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            release_id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" --jq '.id')"
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+              -F draft=false \
+              -F prerelease=false \
+              -f make_latest=true
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "ARGWS Financial Platform $RELEASE_TAG" \
+              --notes-file RELEASE_NOTES.md \
+              --latest
           fi
 
-          # O upload é separado da criação do Release para que a operação seja idempotente
-          # e possa reparar uma publicação parcial com a mesma VERSION/tag.
           gh release upload "$RELEASE_TAG" "${assets[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
-      - name: Verify GitHub Release and every published asset
+
+      - name: Verify normal/latest GitHub Release and every asset
         shell: bash
         run: |
           set -Eeuo pipefail
+
+          release_json="$(gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json name,tagName,isDraft,isPrerelease,url,assets)"
+
+          is_draft="$(jq -r '.isDraft' <<<"$release_json")"
+          is_prerelease="$(jq -r '.isPrerelease' <<<"$release_json")"
+          latest_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
+          release_assets="$(jq -r '.assets[].name' <<<"$release_json")"
+
+          [[ "$is_draft" == "false" ]] || {
+            echo "::error::Release $RELEASE_TAG ficou como Draft."
+            exit 1
+          }
+          [[ "$is_prerelease" == "false" ]] || {
+            echo "::error::Release $RELEASE_TAG ficou como Pre-release."
+            exit 1
+          }
+          [[ "$latest_tag" == "$RELEASE_TAG" ]] || {
+            echo "::error::Latest Release é $latest_tag, esperado $RELEASE_TAG."
+            exit 1
+          }
 
           expected=(
             "ARGWS-Financial-Platform-v${RELEASE_VERSION}.zip"
@@ -250,11 +263,6 @@ jobs:
             "VALIDATION_REPORT.md"
           )
 
-          release_assets="$(gh release view "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json assets \
-            --jq '.assets[].name')"
-
           for name in "${expected[@]}"; do
             grep -Fxq "$name" <<<"$release_assets" || {
               echo "::error::Asset não publicado no GitHub Release: $name"
@@ -262,8 +270,5 @@ jobs:
             }
           done
 
-          gh release view "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json name,tagName,isPrerelease,url,assets
-
-          echo "Release $RELEASE_TAG publicada e verificada com ${#expected[@]} assets."
+          echo "Release $RELEASE_TAG publicada como Release normal, latest e com ${#expected[@]} assets."
+          printf '%s\n' "$release_json"
