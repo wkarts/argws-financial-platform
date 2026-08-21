@@ -26,20 +26,6 @@ def parse_env(path: Path) -> dict[str, str]:
     return values
 
 
-def volume_source(item: object) -> str | None:
-    if isinstance(item, str):
-        # Compose short syntax is SOURCE:TARGET[:MODE]. Use rsplit because
-        # ${FINANCIAL_DATA_ROOT:-.} itself contains a colon.
-        parts = item.rsplit(":", 2)
-        if len(parts) >= 2:
-            return parts[0]
-        return item
-    if isinstance(item, dict):
-        source = item.get("source")
-        return str(source) if source is not None else None
-    return None
-
-
 def main() -> int:
     compose_text = COMPOSE.read_text(encoding="utf-8")
     data = yaml.safe_load(compose_text)
@@ -85,6 +71,8 @@ def main() -> int:
     if missing_services:
         fail(f"Serviços ausentes no Dockge: {missing_services}")
 
+    # Verificamos os bind mounts no YAML bruto porque a sintaxe curta do Compose
+    # contém ':' dentro de ${VAR:-default}, o que torna split por ':' ambíguo.
     required_bind_sources = {
         "${FINANCIAL_DATA_ROOT:-.}/data-postgres",
         "${FINANCIAL_DATA_ROOT:-.}/data-redis",
@@ -94,16 +82,7 @@ def main() -> int:
         "${FINANCIAL_DATA_ROOT:-.}/data-runtime",
         "${FINANCIAL_DATA_ROOT:-.}/data-celery",
     }
-    found_sources: set[str] = set()
-    for service in services.values():
-        if not isinstance(service, dict):
-            continue
-        for item in service.get("volumes", []) or []:
-            source = volume_source(item)
-            if source:
-                found_sources.add(source)
-
-    missing_binds = sorted(required_bind_sources - found_sources)
+    missing_binds = sorted(source for source in required_bind_sources if source not in compose_text)
     if missing_binds:
         fail(f"Bind mounts data-* ausentes: {missing_binds}")
 
