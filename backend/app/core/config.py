@@ -8,6 +8,8 @@ from pydantic import EmailStr, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
 
+from app.version import get_app_version
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -20,7 +22,7 @@ class Settings(BaseSettings):
     app_name: str = "ARGWS Financial Platform"
     app_env: Literal["development", "testing", "staging", "production"] = "development"
     app_debug: bool = False
-    app_version: str = "1.0.0-rc.2"
+    app_version: str = get_app_version()
     app_timezone: str = "America/Bahia"
     app_secret_key: str = Field(min_length=32, default="development-only-change-this-secret-key")
     field_encryption_key: str = ""
