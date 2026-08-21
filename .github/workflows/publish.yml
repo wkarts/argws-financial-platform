@@ -125,7 +125,9 @@ jobs:
           set -Eeuo pipefail
           test "$(tr -d '[:space:]' < VERSION)" = "$RELEASE_VERSION"
           python scripts/validate_project.py
+          python scripts/validate_dockge_runtime.py
           python scripts/package_release.py --output-dir release-artifacts --skip-validation
+          python scripts/package_dockge_stack.py --output-dir release-artifacts
 
           cat > release-artifacts/CONTAINER_IMAGES.txt <<EOF
           ARGWS Financial Platform ${RELEASE_VERSION}
@@ -150,6 +152,7 @@ jobs:
           test -s "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}.tar.gz"
           test -s "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}-SHA256SUMS.txt"
           test -s "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}-PACKAGE_REPORT.json"
+          test -s "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}-Dockge.zip"
 
       - name: Upload GitHub Actions artifacts
         uses: actions/upload-artifact@v4
@@ -194,6 +197,7 @@ jobs:
             "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}.tar.gz"
             "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}-SHA256SUMS.txt"
             "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}-PACKAGE_REPORT.json"
+            "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}-Dockge.zip"
             "release-artifacts/CONTAINER_IMAGES.txt"
             "VALIDATION_REPORT.json"
             "VALIDATION_REPORT.md"
@@ -258,6 +262,7 @@ jobs:
             "ARGWS-Financial-Platform-v${RELEASE_VERSION}.tar.gz"
             "ARGWS-Financial-Platform-v${RELEASE_VERSION}-SHA256SUMS.txt"
             "ARGWS-Financial-Platform-v${RELEASE_VERSION}-PACKAGE_REPORT.json"
+            "ARGWS-Financial-Platform-v${RELEASE_VERSION}-Dockge.zip"
             "CONTAINER_IMAGES.txt"
             "VALIDATION_REPORT.json"
             "VALIDATION_REPORT.md"
