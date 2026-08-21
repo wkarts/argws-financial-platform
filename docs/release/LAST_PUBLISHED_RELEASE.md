@@ -3,9 +3,13 @@
 - Versão: `1.0.0-rc.3`
 - Tag: `v1.0.0-rc.3`
 - Release: https://github.com/wkarts/argws-financial-platform/releases/tag/v1.0.0-rc.3
+- Tipo: Release normal
+- Draft: false
+- Pre-release: false
+- Latest: true
 - Assets verificados: 8
 - Workflow de publicação: SUCCESS
-- Commit publicado: `ef4fabaa20913403528643523ce618478b9f16db`
+- Commit publicado: `8ecf4d7c8f8898659cfccecca3d551f2ffe8c024`
 
 ## Assets
 
