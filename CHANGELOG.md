@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.0.0-rc.4 — 2026-08-21
+
+### Corrigido
+
+- `deployments/dockge/compose.yaml` convertido para stack **image-only**;
+- removidas dependências de `backend/`, `frontend/`, Dockerfiles e arquivos locais da infraestrutura no deploy Dockge;
+- Dockge passa a usar `ghcr.io/wkarts/argws-financial-{api,web,gateway}:latest` com `APP_PULL_POLICY=always`;
+- removido `APP_VERSION` do ambiente do Compose Dockge para preservar a versão canônica embutida nas imagens;
+- `install.sh` e `update.sh` do Dockge deixam de executar build local e passam a usar `docker compose pull`;
+- `rollback.sh` passa a usar aliases imutáveis das imagens da release informada;
+- `healthcheck.sh` passa a usar explicitamente o Compose image-only;
+- documentação Dockge corrigida para refletir o fluxo real de produção;
+- validador estrutural passa a impedir regressão para `build:` local no Dockge.
+
+### Operação
+
+- pasta da stack pode conter apenas `compose.yaml` e `.env`;
+- CloudPanel continua externo à stack e aponta para `127.0.0.1:GATEWAY_PORT`;
+- runtime normal permanece em `:latest`; tags versionadas ficam reservadas para rollback/auditoria.
+
 ## 1.0.0-rc.3 — 2026-08-21
 
 ### Corrigido
