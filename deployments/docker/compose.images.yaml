@@ -4,7 +4,7 @@ x-api-env: &api-env
   APP_NAME: ${APP_NAME:-ARGWS Financial Platform}
   APP_ENV: ${APP_ENV:-production}
   APP_DEBUG: ${APP_DEBUG:-false}
-  APP_VERSION: ${APP_VERSION:-1.0.0-rc.2}
+  APP_VERSION: ${APP_VERSION:-dev}
   APP_TIMEZONE: ${APP_TIMEZONE:-America/Bahia}
   APP_SECRET_KEY: ${APP_SECRET_KEY:?APP_SECRET_KEY obrigatória}
   FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY obrigatória}
@@ -104,7 +104,7 @@ x-api-env: &api-env
   PROMETHEUS_ENABLED: ${PROMETHEUS_ENABLED:-true}
 
 x-api-common: &api-common
-  image: ${BACKEND_IMAGE:-ghcr.io/wkarts/argws-financial-api:${APP_VERSION:-1.0.0-rc.2}}
+  image: ${BACKEND_IMAGE:-ghcr.io/wkarts/argws-financial-api:latest}
   pull_policy: ${APP_PULL_POLICY:-always}
   restart: unless-stopped
   environment: *api-env
@@ -269,7 +269,7 @@ services:
       financial-api: {condition: service_healthy}
 
   financial-web:
-    image: ${FRONTEND_IMAGE:-ghcr.io/wkarts/argws-financial-web:${APP_VERSION:-1.0.0-rc.2}}
+    image: ${FRONTEND_IMAGE:-ghcr.io/wkarts/argws-financial-web:latest}
     pull_policy: ${APP_PULL_POLICY:-always}
     restart: unless-stopped
     healthcheck:
@@ -280,7 +280,7 @@ services:
     networks: [financial-internal]
 
   financial-gateway:
-    image: ${GATEWAY_IMAGE:-ghcr.io/wkarts/argws-financial-gateway:${APP_VERSION:-1.0.0-rc.2}}
+    image: ${GATEWAY_IMAGE:-ghcr.io/wkarts/argws-financial-gateway:latest}
     pull_policy: ${APP_PULL_POLICY:-always}
     restart: unless-stopped
     depends_on:
