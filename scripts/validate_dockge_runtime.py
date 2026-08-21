@@ -71,10 +71,19 @@ def main() -> int:
     if missing_services:
         fail(f"Serviços ausentes no Dockge: {missing_services}")
 
-    for service_name in ("financial-api", "financial-web", "financial-gateway"):
+    expected_runtime = {
+        "financial-api": "ghcr.io/wkarts/argws-financial-api:latest",
+        "financial-web": "ghcr.io/wkarts/argws-financial-web:latest",
+        "financial-gateway": "ghcr.io/wkarts/argws-financial-gateway:latest",
+    }
+    for service_name, expected_image in expected_runtime.items():
         service = services.get(service_name)
-        if not isinstance(service, dict) or service.get("pull_policy") != "always":
+        if not isinstance(service, dict):
+            fail(f"{service_name} inválido no Compose Dockge")
+        if service.get("pull_policy") != "always":
             fail(f"{service_name} deve usar pull_policy: always fixo no Compose Dockge")
+        if service.get("image") != expected_image:
+            fail(f"{service_name} deve usar imagem fixa {expected_image}")
 
     required_bind_sources = {
         "${FINANCIAL_DATA_ROOT:-.}/data-postgres",
@@ -107,7 +116,7 @@ def main() -> int:
     print("Dockge runtime: PASS")
     print("- image-only: OK")
     print("- pull_policy always fixo: OK")
-    print("- GHCR latest: OK")
+    print("- imagens GHCR latest fixas: OK")
     print("- bind mounts ./data-*: OK")
     print("- named volumes: ausentes")
     return 0
