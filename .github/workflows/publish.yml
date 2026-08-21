@@ -1,0 +1,147 @@
+name: Publish Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - VERSION
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: publish-release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || {
+            echo "::error::Versão inválida: $version"
+            exit 1
+          }
+          prerelease=false
+          [[ "$version" == *-* ]] && prerelease=true
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+  images:
+    runs-on: ubuntu-latest
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: api
+            dockerfile: backend/Dockerfile
+          - name: web
+            dockerfile: frontend/Dockerfile
+          - name: gateway
+            dockerfile: infrastructure/docker/gateway/Dockerfile
+          - name: acme
+            dockerfile: infrastructure/acme/Dockerfile
+          - name: cloudpanel-agent
+            dockerfile: infrastructure/cloudpanel-agent/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/argws-financial-${{ matrix.name }}
+          tags: |
+            type=raw,value=${{ needs.prepare.outputs.version }}
+            type=raw,value=rc,enable=${{ needs.prepare.outputs.prerelease == 'true' }}
+            type=raw,value=latest,enable=${{ needs.prepare.outputs.prerelease == 'false' }}
+            type=sha
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=publish-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=publish-${{ matrix.name }}
+
+  artifacts:
+    runs-on: ubuntu-latest
+    needs: [prepare, images]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install packaging dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd
+      - name: Validate and package release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          version="${{ needs.prepare.outputs.version }}"
+          test "$(tr -d '[:space:]' < VERSION)" = "$version"
+          python scripts/validate_project.py
+          python scripts/package_release.py --output-dir release-artifacts
+          cat > release-artifacts/CONTAINER_IMAGES.txt <<EOF
+          ARGWS Financial Platform ${version}
+
+          ghcr.io/${{ github.repository_owner }}/argws-financial-api:${version}
+          ghcr.io/${{ github.repository_owner }}/argws-financial-web:${version}
+          ghcr.io/${{ github.repository_owner }}/argws-financial-gateway:${version}
+          ghcr.io/${{ github.repository_owner }}/argws-financial-acme:${version}
+          ghcr.io/${{ github.repository_owner }}/argws-financial-cloudpanel-agent:${version}
+          EOF
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ARGWS-Financial-Platform-${{ needs.prepare.outputs.version }}
+          path: |
+            release-artifacts/*
+            RELEASE_NOTES.md
+            VALIDATION_REPORT.json
+            VALIDATION_REPORT.md
+          if-no-files-found: error
+          retention-days: 30
+      - name: Create GitHub Release and version tag
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ARGWS Financial Platform ${{ needs.prepare.outputs.tag }}
+          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+          make_latest: ${{ needs.prepare.outputs.prerelease == 'false' }}
+          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
+          fail_on_unmatched_files: true
+          files: |
+            release-artifacts/ARGWS-Financial-Platform-v*.zip
+            release-artifacts/ARGWS-Financial-Platform-v*.tar.zst
+            release-artifacts/ARGWS-Financial-Platform-v*.tar.gz
+            release-artifacts/ARGWS-Financial-Platform-v*-SHA256SUMS.txt
+            release-artifacts/ARGWS-Financial-Platform-v*-PACKAGE_REPORT.json
+            release-artifacts/CONTAINER_IMAGES.txt
+            VALIDATION_REPORT.json
+            VALIDATION_REPORT.md
