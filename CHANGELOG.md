@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.0.0-rc.3 — 2026-08-21
+
+### Corrigido
+
+- `VERSION` definido como única fonte canônica da versão da aplicação;
+- `APP_VERSION` e `VITE_APP_VERSION` sincronizadas automaticamente;
+- remoção da versão fixa de backend, frontend, Dockerfiles, Compose e exemplos de ambiente;
+- imagens operacionais do produto padronizadas em `:latest`;
+- publicação GHCR corrigida para atualizar `:latest` em toda release, inclusive prerelease;
+- workflow único de publicação com CI, imagens, artefatos, tag e GitHub Release;
+- deploys Docker, Dockge, CloudPanel e Portainer alinhados ao mesmo contrato de versão/imagens;
+- Dependabot agrupado e sem atualizações major automáticas;
+- Tailwind 4 bloqueado até migração explícita.
+
+### Distribuição
+
+- imagens GHCR `api`, `web`, `gateway`, `acme` e `cloudpanel-agent`;
+- ZIP, TAR.ZST e TAR.GZ;
+- checksums SHA-256;
+- inventário/relatório da distribuição;
+- artefatos do GitHub Actions;
+- GitHub Release versionada.
+
 ## 1.0.0-rc.2 — 2026-08-20
 
 ### Validado e corrigido
@@ -60,4 +83,4 @@
 - fundação inicial da plataforma;
 - fluxo financeiro Sandbox;
 - primeira estrutura multitenant;
-- Compose e interface parciais.
+- Compose e interface parciais;
