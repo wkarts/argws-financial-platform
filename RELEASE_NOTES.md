@@ -1,82 +1,73 @@
-# Release Notes — v1.0.0-rc.2
+# Release Notes — v1.0.0-rc.3
 
-Esta release substitui a entrega Alpha anterior e consolida a ARGWS Financial Platform como **release candidate completa no nível de código-fonte, interface, migrations, workers, segurança e distribuição operacional**.
+Esta release corrige definitivamente o fluxo de versionamento e publicação da ARGWS Financial Platform, mantendo **uma única fonte de verdade para a versão da aplicação** e separando-a da tag operacional das imagens Docker.
 
-## Correções finais de publicação
+## Versionamento canônico
 
-- corrigido o fluxo pós-merge para publicar a versão declarada em `VERSION` automaticamente;
-- publicação automática das imagens `api`, `web`, `gateway`, `acme` e `cloudpanel-agent` no GHCR;
-- criação automática da tag `v1.0.0-rc.2` e da GitHub Release após validação da CI;
-- modo `images` do instalador Docker corrigido para consumir as imagens versionadas do GHCR;
-- deploy Portainer alinhado ao mesmo conjunto de imagens versionadas;
-- Dependabot agrupado por ecossistema, limitado e sem upgrades major automáticos;
-- Tailwind CSS mantido em 3.4.x para preservar compatibilidade com a configuração PostCSS atual, evitando a migração parcial para Tailwind 4 que quebrava o build.
+- `VERSION` passa a ser a única fonte de verdade da versão da aplicação;
+- `APP_VERSION` é sincronizada automaticamente a partir de `VERSION` durante bootstrap/deploy;
+- `VITE_APP_VERSION` é obtida automaticamente a partir de `VERSION` durante o build Vue/Vite;
+- removida a versão duplicada de `frontend/package.json`;
+- removidas versões fixas do backend, Dockerfiles, Compose e arquivos `.env.example`;
+- os Dockerfiles empacotam `VERSION` para que a aplicação continue conhecendo sua versão real dentro do container.
 
-## Destaques
+## Imagens Docker
 
-- Control Plane administrativo ampliado;
-- Tenant Plane financeiro ampliado;
-- banco, usuário e storage exclusivos por tenant;
-- domínios provisionados e personalizados;
-- planos, limites e capacidades aplicados no backend;
-- usuários da plataforma, API keys e suporte temporário auditado;
-- múltiplas empresas por tenant e restrição por empresa;
-- pagamentos, estornos, negociações e links públicos;
-- Pix Automático;
-- importação OFX/CSV;
-- API keys e webhooks assinados por tenant;
-- CNAB 240 e CNAB 400 extensíveis;
-- provider Sandbox e adapter Asaas;
-- SMTP, Evolution API, Outbox e régua de cobrança;
-- backup/restore e exportação de tenant;
-- pacotes completos para Docker, Dockge, CloudPanel e Portainer;
-- monitoramento opcional com Prometheus/Grafana;
-- CI, publicação de imagens e release versionada.
-
-## Validações específicas da rc.2
-
-- 41 testes backend aprovados;
-- frontend com typecheck, Vitest e build Vite aprovados;
-- Docker smoke test completo aprovado com API, Control Plane e tenant demo saudáveis;
-- builds das imagens `api`, `web`, `gateway`, `acme` e `cloudpanel-agent` aprovados;
-- 161 rotas FastAPI inventariadas;
-- 171 chamadas HTTP do frontend (123 contratos únicos) cruzadas com o backend, sem divergências;
-- migrations Alembic validadas com heads únicos e caminhos portáveis;
-- empacotador canônico com exclusão de segredos/caches, manifest interno, ZIP/TAR e checksums externos.
-
-## Fluxo coberto
+As stacks de runtime passam a usar sempre:
 
 ```text
-Control Plane
- -> cria plano/tenant
- -> provisiona banco, usuário, storage e domínio
- -> cria empresa e administrador iniciais
- -> Tenant Plane cadastra empresas/clientes/serviços/contratos
- -> recorrência gera recebíveis
- -> cobrança registra boleto/Pix/Pix Automático
- -> SMTP/Evolution comunica o cliente
- -> pagamento, webhook, CNAB ou extrato efetua baixa/conciliação
- -> recibo/documento fiscal/documentos são gerados
- -> auditoria, exportação e backup preservam o histórico
+BACKEND_IMAGE=ghcr.io/wkarts/argws-financial-api:latest
+FRONTEND_IMAGE=ghcr.io/wkarts/argws-financial-web:latest
+GATEWAY_IMAGE=ghcr.io/wkarts/argws-financial-gateway:latest
+ACME_IMAGE=ghcr.io/wkarts/argws-financial-acme:latest
+CLOUDPANEL_AGENT_IMAGE=ghcr.io/wkarts/argws-financial-cloudpanel-agent:latest
 ```
 
-## Distribuições
+O workflow de publicação também mantém aliases imutáveis com a versão da release para auditoria e rollback, mas **nenhum arquivo operacional depende desses aliases**.
 
-- Compose de build pelo fonte;
-- Compose de produção por imagens versionadas no GHCR;
-- Dockge com instalador, atualização, rollback e health check;
-- CloudPanel com `clpctl`, vhosts, wildcard, SSL/ACME opcional, atualização e rollback;
-- Portainer com stack por imagens, stack Git/source e automação pela API;
-- ambientes development, staging e production.
+## Publicação
+
+O workflow canônico `Publish Release` executa:
+
+1. leitura da versão em `VERSION`;
+2. CI completa reutilizável;
+3. build das cinco imagens Docker;
+4. push das imagens para o GHCR com `:latest`, versão e SHA;
+5. verificação das imagens publicadas;
+6. validação e empacotamento da distribuição;
+7. upload dos artefatos no GitHub Actions;
+8. criação da tag Git;
+9. criação do GitHub Release;
+10. upload dos artefatos ZIP, TAR.ZST, TAR.GZ, checksums, inventário e relatórios.
+
+O workflow antigo e duplicado de release foi removido.
+
+## Dependabot
+
+- PRs automáticas antigas foram encerradas;
+- atualizações passam a ser agrupadas por ecossistema;
+- somente uma PR automática pode ficar aberta por ecossistema;
+- atualizações major automáticas foram bloqueadas;
+- Tailwind CSS 4 permanece bloqueado até existir uma migração intencional do PostCSS/Tailwind.
+
+## Plataforma
+
+A release mantém o conjunto funcional já entregue:
+
+- Control Plane e Tenant Plane;
+- isolamento PostgreSQL/storage por tenant;
+- múltiplas empresas por tenant;
+- domínios provisionados e personalizados;
+- clientes, serviços, contratos, recorrência e contas a receber;
+- boleto, Pix, Pix Automático, CNAB 240/400 e conciliação;
+- SMTP e Evolution API;
+- NFS-e/recibos e documentos;
+- Outbox, RabbitMQ e Celery;
+- auditoria e segurança;
+- backup/restore local, S3/MinIO, Google Drive e Dropbox;
+- Docker, Dockge, CloudPanel e Portainer;
+- Prometheus/Grafana opcionais.
 
 ## Condição da release candidate
 
-A release é candidata à produção após:
-
-1. configurar os domínios reais;
-2. preencher credenciais externas;
-3. homologar o banco/PSP, carteira, CNAB e NFS-e escolhidos;
-4. executar teste completo de backup e restore no ambiente de destino;
-5. concluir validação de segurança e operação.
-
-Providers Sandbox continuam disponíveis para testes sem credenciais. A release não declara homologação externa que não foi efetivamente executada.
+A release continua exigindo credenciais e homologações reais para bancos/PSPs, CNAB, NFS-e, SMTP, Evolution API, Cloudflare e destinos externos de backup. Providers Sandbox continuam disponíveis para ambientes sem credenciais reais.
