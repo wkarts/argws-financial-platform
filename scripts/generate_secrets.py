@@ -3,15 +3,23 @@ from __future__ import annotations
 
 import argparse
 import base64
-import re
 import secrets
 import stat
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def token(length: int = 48) -> str:
     return secrets.token_urlsafe(length)
+
+
+def canonical_version() -> str:
+    version_file = ROOT / "VERSION"
+    version = version_file.read_text(encoding="utf-8").strip()
+    if not version:
+        raise SystemExit(f"VERSION vazia: {version_file}")
+    return version
 
 
 def load_env(path: Path) -> list[str]:
@@ -54,8 +62,10 @@ def main() -> int:
     args = parser.parse_args()
     if not args.env.exists():
         raise SystemExit(f"Arquivo não encontrado: {args.env}")
+
     lines = load_env(args.env)
     current = parse(lines)
+    version = canonical_version()
 
     generated = {
         "APP_SECRET_KEY": token(64),
@@ -79,6 +89,11 @@ def main() -> int:
         else:
             values[key] = existing
 
+    # VERSION é a única fonte canônica de versão da aplicação. O .env de runtime
+    # é sempre sincronizado com ela e não deve manter versão copiada manualmente.
+    values["APP_VERSION"] = version
+    values["VITE_APP_VERSION"] = version
+
     values["POSTGRES_ADMIN_PASSWORD"] = values["POSTGRES_PASSWORD"]
     # A stack padrão usa o MinIO interno; as credenciais S3 precisam ser exatamente
     # as credenciais root configuradas no container MinIO. Para S3 externo, ajuste
@@ -88,13 +103,14 @@ def main() -> int:
     values["RABBITMQ_URL"] = f"amqp://{current.get('RABBITMQ_USER','financial')}:{values['RABBITMQ_PASSWORD']}@financial-rabbitmq:5672/financial"
     values["CELERY_BROKER_URL"] = values["RABBITMQ_URL"]
 
-    args.env.write_text("\n".join(replace(lines, values)) + "\n", encoding="utf-8")
+    final_lines = replace(lines, values)
+    args.env.write_text("\n".join(final_lines) + "\n", encoding="utf-8")
     args.env.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
-    final_values = parse(replace(lines, values))
+    final_values = parse(final_lines)
     credentials = args.env.parent / ".bootstrap-credentials.txt"
     credential_lines = [
-        "ARGWS Financial Platform — credenciais iniciais",
+        f"ARGWS Financial Platform {version} — credenciais iniciais",
         f"Control Plane: {final_values.get('PUBLIC_SCHEME','https')}://{final_values.get('CONTROL_PLANE_HOST','control.localhost')}",
         f"Usuário: {final_values.get('PLATFORM_ADMIN_EMAIL','admin@example.com')}",
         f"Senha: {values['PLATFORM_ADMIN_PASSWORD']}",
@@ -112,6 +128,7 @@ def main() -> int:
     ])
     credentials.write_text("\n".join(credential_lines) + "\n", encoding="utf-8")
     credentials.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    print(f"Versão sincronizada: {version}")
     print(f"Segredos gravados em {args.env}")
     print(f"Credenciais iniciais gravadas em {credentials}")
     return 0
