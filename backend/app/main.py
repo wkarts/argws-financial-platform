@@ -112,7 +112,32 @@ async def rate_limit_guard(request: Request, call_next):
 
 @app.middleware("http")
 async def maintenance_guard(request: Request, call_next):
-    if settings.maintenance_file.exists() and not request.url.path.startswith(("/health", "/metrics")):
+    # Liveness/readiness/metrics nunca devem depender do arquivo de manutenção.
+    # Isso evita derrubar o healthcheck caso o volume persistente esteja com
+    # permissão incorreta e mantém observabilidade durante manutenção/restore.
+    if request.url.path.startswith(("/health", "/metrics")):
+        return await call_next(request)
+
+    try:
+        maintenance_enabled = settings.maintenance_file.exists()
+    except OSError as exc:
+        logger.error(
+            "maintenance_file_unavailable",
+            path=str(settings.maintenance_file),
+            error=type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": {
+                    "code": "MAINTENANCE_STATE_UNAVAILABLE",
+                    "message": "Não foi possível validar o estado de manutenção da plataforma.",
+                }
+            },
+            headers={"Retry-After": "60"},
+        )
+
+    if maintenance_enabled:
         return JSONResponse(
             status_code=503,
             content={"error": {"code": "MAINTENANCE_MODE", "message": "Plataforma temporariamente indisponível para manutenção."}},
