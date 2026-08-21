@@ -12,6 +12,7 @@ from app.api.deps import (
     ensure_company_access,
     get_tenant_context_dep,
     get_tenant_db,
+    get_tenant_entitlements,
     require_permission,
 )
 from app.core.errors import APIError
@@ -23,6 +24,7 @@ from app.schemas.tenant import FiscalIssueInput, ReceiptIssueInput, Reconciliati
 from app.services.audit import tenant_audit
 from app.services.documents import DocumentService
 from app.services.fiscal import FiscalService
+from app.services.entitlements import TenantEntitlements
 from app.services.receipts import ReceiptService
 
 router = APIRouter(prefix="/api/v1", tags=["Tenant - Operações"])
@@ -203,7 +205,9 @@ async def issue_fiscal_document(
     context: TenantContext = Depends(get_tenant_context_dep),
     user: AuthUser = Depends(require_permission("fiscal.create")),
     session: AsyncSession = Depends(get_tenant_db),
+    entitlements: TenantEntitlements = Depends(get_tenant_entitlements),
 ) -> SuccessResponse[dict]:
+    entitlements.require_feature("nfse")
     receivable = await session.get(Receivable, payload.receivable_id)
     if receivable is None:
         raise APIError("RECEIVABLE_NOT_FOUND", "Recebível não encontrado.", 404)

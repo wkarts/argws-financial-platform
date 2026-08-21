@@ -16,6 +16,7 @@ from app import __version__
 from app.api.deps import close_redis
 from app.api.routes import (
     control_auth,
+    control_management,
     control_operations,
     control_tenants,
     health,
@@ -24,8 +25,11 @@ from app.api.routes import (
     tenant_catalog,
     tenant_finance,
     tenant_integrations,
+    tenant_management,
     tenant_imports,
     tenant_operations,
+    tenant_pix_automatic,
+    public_finance,
     webhooks,
 )
 from app.core.config import settings
@@ -66,7 +70,7 @@ app.add_middleware(
     allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Tenant-Host", "X-Webhook-Secret"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID", "X-Tenant-Host", "X-Webhook-Secret", "X-API-Key", "X-Platform-API-Key"],
 )
 
 
@@ -140,6 +144,7 @@ app.add_exception_handler(APIError, api_error_handler)  # type: ignore[arg-type]
 
 app.include_router(health.router)
 app.include_router(control_auth.router)
+app.include_router(control_management.router)
 app.include_router(control_operations.router)
 app.include_router(control_tenants.router)
 app.include_router(tenant_auth.router)
@@ -147,8 +152,11 @@ app.include_router(tenant_admin.router)
 app.include_router(tenant_catalog.router)
 app.include_router(tenant_finance.router)
 app.include_router(tenant_integrations.router)
+app.include_router(tenant_management.router)
 app.include_router(tenant_imports.router)
 app.include_router(tenant_operations.router)
+app.include_router(tenant_pix_automatic.router)
+app.include_router(public_finance.router)
 app.include_router(webhooks.router)
 
 

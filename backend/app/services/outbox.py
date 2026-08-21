@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.tenant import Charge, Customer, OutboxEvent, Payment, Receivable
 from app.services.notifications import NotificationService
+from app.services.outbound_webhooks import OutboundWebhookService
 
 
 def money_br(value: Decimal) -> str:
@@ -19,6 +20,7 @@ class OutboxService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.notifications = NotificationService(session)
+        self.outbound_webhooks = OutboundWebhookService(session)
 
     async def _handle_charge_registered(self, event: OutboxEvent) -> None:
         charge = await self.session.get(Charge, event.payload["charge_id"])
@@ -122,6 +124,9 @@ class OutboxService:
                     await self._handle_charge_registered(event)
                 elif event.event_type == "financial.payment.confirmed":
                     await self._handle_payment_confirmed(event)
+                await self.outbound_webhooks.enqueue(
+                    event.event_type, str(event.id), event.payload, commit=False
+                )
                 event.status = "PROCESSED"
                 event.processed_at = datetime.now(UTC)
                 event.last_error = None

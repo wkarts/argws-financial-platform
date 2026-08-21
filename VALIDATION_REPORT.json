@@ -1,9 +1,22 @@
 {
   "status": "PASS",
+  "version": "1.0.0-rc.2",
   "errors": [],
-  "warnings": [],
-  "python_files": 94,
-  "vue_files": 27,
-  "documentation_files": 18,
-  "total_files": 195
+  "warnings": [
+    "frontend/package-lock.json não está incluído; o Dockerfile usa npm install com versões diretas fixadas"
+  ],
+  "metrics": {
+    "shell_scripts": 23,
+    "yaml_files": 16,
+    "vue_files": 57,
+    "platform_migrations": 2,
+    "tenant_migrations": 3,
+    "fastapi_route_decorators": 161,
+    "frontend_api_calls": 171,
+    "frontend_api_contracts": 123,
+    "frontend_api_contract_mismatches": 0,
+    "python_files": 114,
+    "documentation_files": 29,
+    "total_files": 307
+  }
 }

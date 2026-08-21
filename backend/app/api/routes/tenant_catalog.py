@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import current_tenant_user, ensure_company_access, get_tenant_db, require_permission
+from app.api.deps import current_tenant_user, ensure_company_access, get_tenant_db, get_tenant_entitlements, require_permission
 from app.core.errors import APIError
 from app.models.tenant import (
     Company,
@@ -30,6 +30,7 @@ from app.schemas.tenant import (
     ServiceRead,
 )
 from app.services.audit import tenant_audit
+from app.services.entitlements import TenantEntitlements
 
 router = APIRouter(prefix="/api/v1", tags=["Tenant - Cadastros"])
 
@@ -51,7 +52,10 @@ async def create_company(
     payload: CompanyCreate,
     user: AuthUser = Depends(require_permission("companies.create")),
     session: AsyncSession = Depends(get_tenant_db),
+    entitlements: TenantEntitlements = Depends(get_tenant_entitlements),
 ) -> SuccessResponse[CompanyRead]:
+    company_count = await session.scalar(select(func.count()).select_from(Company)) or 0
+    entitlements.enforce_limit("companies", int(company_count))
     if await session.scalar(select(Company.id).where(Company.tax_id == payload.tax_id)):
         raise APIError("COMPANY_TAX_ID_EXISTS", "Já existe uma empresa com este CNPJ/CPF.", 409)
     company = Company(**payload.model_dump())
@@ -115,7 +119,10 @@ async def create_customer(
     payload: CustomerCreate,
     user: AuthUser = Depends(require_permission("customers.create")),
     session: AsyncSession = Depends(get_tenant_db),
+    entitlements: TenantEntitlements = Depends(get_tenant_entitlements),
 ) -> SuccessResponse[CustomerRead]:
+    customer_count = await session.scalar(select(func.count()).select_from(Customer)) or 0
+    entitlements.enforce_limit("customers", int(customer_count))
     if payload.tax_id and await session.scalar(select(Customer.id).where(Customer.tax_id == payload.tax_id)):
         raise APIError("CUSTOMER_TAX_ID_EXISTS", "Já existe um cliente com este CPF/CNPJ.", 409)
     values = payload.model_dump(exclude={"contacts"})

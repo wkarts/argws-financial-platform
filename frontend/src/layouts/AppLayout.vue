@@ -1,70 +1,164 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import {
-  Activity, BadgeDollarSign, Bell, Building2, CircleDollarSign,
-  FileArchive, FileCheck2, FileText, Gauge, Landmark, Link2, LogOut, Menu, MessageSquare, ReceiptText,
-  Settings, ShieldCheck, Users, X
+  Activity, BadgeDollarSign, Banknote, Bell, Blocks, BriefcaseBusiness, Building2,
+  ChevronDown, CircleDollarSign, CloudCog, Code2, DatabaseBackup, Download,
+  FileArchive, FileCheck2, FileClock, FileSearch, FileText, Gauge, Globe2,
+  KeyRound, Landmark, Link2, ListChecks, LogOut, Menu, MessageSquare, ReceiptText,
+  RefreshCw, ScrollText, Settings, ShieldCheck, Sparkles, Tags, UploadCloud,
+  UserCog, Users, WalletCards, X
 } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
 import { useAppStore } from '../stores/app'
+
+interface MenuItem { to: string; label: string; icon: unknown; badge?: string }
+interface MenuGroup { label: string; items: MenuItem[] }
 
 const auth = useAuthStore()
 const app = useAppStore()
 const route = useRoute()
 const router = useRouter()
+const notificationsOpen = ref(false)
 
-const controlMenu = [
-  { to: '/', label: 'Visão Geral', icon: Gauge },
-  { to: '/tenants', label: 'Tenants', icon: Building2 },
-  { to: '/platform-health', label: 'Operação', icon: Activity }
+const controlMenu: MenuGroup[] = [
+  { label: 'Plataforma', items: [
+    { to: '/', label: 'Visão geral', icon: Gauge },
+    { to: '/tenants', label: 'Tenants', icon: Building2 },
+    { to: '/plans', label: 'Planos e limites', icon: WalletCards },
+    { to: '/platform-users', label: 'Equipe da plataforma', icon: Users }
+  ] },
+  { label: 'Infraestrutura', items: [
+    { to: '/domains', label: 'Domínios e SSL', icon: Globe2 },
+    { to: '/provisioning', label: 'Provisionamento', icon: CloudCog },
+    { to: '/backups', label: 'Backup e restore', icon: DatabaseBackup },
+    { to: '/platform-health', label: 'Saúde e filas', icon: Activity }
+  ] },
+  { label: 'Governança', items: [
+    { to: '/platform-access', label: 'API e suporte', icon: KeyRound },
+    { to: '/control-audit', label: 'Auditoria global', icon: ShieldCheck },
+    { to: '/control-settings', label: 'Configurações', icon: Settings }
+  ] }
 ]
-const tenantMenu = [
-  { to: '/', label: 'Dashboard', icon: Gauge },
-  { to: '/companies', label: 'Empresas', icon: Building2 },
-  { to: '/customers', label: 'Clientes', icon: Users },
-  { to: '/contracts', label: 'Contratos', icon: FileText },
-  { to: '/receivables', label: 'Recebíveis', icon: CircleDollarSign },
-  { to: '/charges', label: 'Cobranças', icon: ReceiptText },
-  { to: '/banking', label: 'Bancos e CNAB', icon: Landmark },
-  { to: '/reconciliation', label: 'Conciliação', icon: Link2 },
-  { to: '/fiscal', label: 'Fiscal e recibos', icon: FileCheck2 },
-  { to: '/integrations', label: 'Integrações', icon: Settings },
-  { to: '/notifications', label: 'Comunicações', icon: MessageSquare },
-  { to: '/imports', label: 'Importações', icon: FileArchive },
-  { to: '/users', label: 'Usuários', icon: Users },
-  { to: '/audit', label: 'Auditoria', icon: ShieldCheck }
-]
-const menu = computed(() => auth.isControlPlane ? controlMenu : tenantMenu)
-const appName = computed(() => auth.isControlPlane ? 'ARGWS Control Plane' : app.tenant?.branding.name || 'Financeiro')
 
-async function logout() { await auth.logout(); await router.push('/login') }
-onMounted(() => { if (!auth.isControlPlane) app.loadTenantContext() })
+const tenantMenu: MenuGroup[] = [
+  { label: 'Visão geral', items: [
+    { to: '/', label: 'Dashboard', icon: Gauge }
+  ] },
+  { label: 'Cadastros', items: [
+    { to: '/companies', label: 'Empresas emissoras', icon: Building2 },
+    { to: '/customers', label: 'Clientes e contatos', icon: Users },
+    { to: '/services', label: 'Serviços', icon: Blocks },
+    { to: '/contracts', label: 'Contratos e recorrência', icon: FileText }
+  ] },
+  { label: 'Cobrança e recebíveis', items: [
+    { to: '/receivables', label: 'Contas a receber', icon: CircleDollarSign },
+    { to: '/charges', label: 'Cobranças', icon: ReceiptText },
+    { to: '/payments', label: 'Pagamentos', icon: Banknote },
+    { to: '/payment-links', label: 'Links de pagamento', icon: Link2 },
+    { to: '/negotiations', label: 'Negociações', icon: ListChecks }
+  ] },
+  { label: 'Bancos e conciliação', items: [
+    { to: '/banking', label: 'Contas e convênios', icon: Landmark },
+    { to: '/bank-transactions', label: 'Extratos e transações', icon: FileSearch },
+    { to: '/cnab', label: 'CNAB 240/400', icon: ScrollText },
+    { to: '/pix-automatic', label: 'Pix Automático', icon: Sparkles },
+    { to: '/reconciliation', label: 'Conciliação', icon: Tags }
+  ] },
+  { label: 'Documentos e comunicação', items: [
+    { to: '/fiscal', label: 'Fiscal e recibos', icon: FileCheck2 },
+    { to: '/notifications', label: 'E-mail e WhatsApp', icon: MessageSquare },
+    { to: '/documents', label: 'Central de documentos', icon: FileClock },
+    { to: '/exports', label: 'Exportações', icon: Download },
+    { to: '/reports', label: 'Relatórios', icon: FileArchive },
+    { to: '/imports', label: 'Importações', icon: UploadCloud }
+  ] },
+  { label: 'Administração', items: [
+    { to: '/integrations', label: 'Integrações operacionais', icon: Settings },
+    { to: '/developer', label: 'API e webhooks', icon: Code2 },
+    { to: '/roles', label: 'Perfis e permissões', icon: UserCog },
+    { to: '/users', label: 'Usuários', icon: BriefcaseBusiness },
+    { to: '/audit', label: 'Auditoria', icon: ShieldCheck }
+  ] }
+]
+
+const groups = computed(() => auth.isControlPlane ? controlMenu : tenantMenu)
+const appName = computed(() => auth.isControlPlane ? 'ARGWS Control Plane' : app.tenant?.branding.name || 'ARGWS Financeiro')
+const planeLabel = computed(() => auth.isControlPlane ? 'Administração SaaS' : 'Cobranças & Recebíveis')
+const currentTitle = computed(() => {
+  for (const group of groups.value) {
+    const item = group.items.find(value => isActive(value.to))
+    if (item) return item.label
+  }
+  return auth.isControlPlane ? 'Control Plane' : app.tenant?.hostname || 'Financeiro'
+})
+
+function isActive(to: string): boolean {
+  if (to === '/') return route.path === '/'
+  return route.path === to || route.path.startsWith(`${to}/`)
+}
+
+async function logout() {
+  await auth.logout()
+  await router.push('/login')
+}
+
+async function refreshContext() {
+  if (!auth.isControlPlane) await app.loadTenantContext()
+}
+
+onMounted(refreshContext)
 </script>
+
 <template>
   <div class="min-h-screen bg-slate-50">
-    <div v-if="app.sidebarOpen" class="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" @click="app.sidebarOpen = false" />
-    <aside class="fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-slate-800 bg-slate-950 text-white transition-transform lg:translate-x-0" :class="app.sidebarOpen ? 'translate-x-0' : '-translate-x-full'">
+    <div v-if="app.sidebarOpen" class="fixed inset-0 z-30 bg-slate-950/50 backdrop-blur-sm lg:hidden" @click="app.sidebarOpen = false" />
+
+    <aside class="fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-slate-800 bg-slate-950 text-white transition-transform duration-200 lg:translate-x-0" :class="app.sidebarOpen ? 'translate-x-0' : '-translate-x-full'">
       <div class="flex h-20 items-center gap-3 border-b border-slate-800 px-5">
-        <div class="grid h-11 w-11 place-items-center rounded-2xl bg-teal-500/15 text-teal-300"><BadgeDollarSign :size="26" /></div>
-        <div class="min-w-0"><p class="truncate text-sm font-bold">{{ appName }}</p><p class="text-xs text-slate-400">{{ auth.isControlPlane ? 'Administração SaaS' : 'Cobranças & Recebíveis' }}</p></div>
-        <button class="ml-auto rounded-lg p-2 text-slate-400 hover:bg-slate-800 lg:hidden" @click="app.sidebarOpen = false"><X :size="20" /></button>
+        <div class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-teal-500/15 text-teal-300"><BadgeDollarSign :size="26" /></div>
+        <div class="min-w-0"><p class="truncate text-sm font-bold">{{ appName }}</p><p class="truncate text-xs text-slate-400">{{ planeLabel }}</p></div>
+        <button class="ml-auto rounded-lg p-2 text-slate-400 hover:bg-slate-800 lg:hidden" aria-label="Fechar menu" @click="app.sidebarOpen = false"><X :size="20" /></button>
       </div>
-      <nav class="flex-1 space-y-1 overflow-y-auto p-4">
-        <RouterLink v-for="item in menu" :key="item.to" :to="item.to" class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition" :class="route.path === item.to ? 'bg-teal-500/15 text-teal-300' : 'text-slate-300 hover:bg-slate-900 hover:text-white'" @click="app.sidebarOpen = false">
-          <component :is="item.icon" :size="19" />{{ item.label }}
-        </RouterLink>
+
+      <nav class="flex-1 overflow-y-auto p-4">
+        <section v-for="group in groups" :key="group.label" class="mb-5">
+          <p class="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{{ group.label }}</p>
+          <div class="space-y-1">
+            <RouterLink v-for="item in group.items" :key="item.to" :to="item.to" class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition" :class="isActive(item.to) ? 'bg-teal-500/15 text-teal-300 shadow-inner' : 'text-slate-300 hover:bg-slate-900 hover:text-white'" @click="app.sidebarOpen = false">
+              <component :is="item.icon" :size="19" /><span class="min-w-0 flex-1 truncate">{{ item.label }}</span><span v-if="item.badge" class="rounded-full bg-slate-800 px-2 py-0.5 text-[10px]">{{ item.badge }}</span>
+            </RouterLink>
+          </div>
+        </section>
       </nav>
+
       <div class="border-t border-slate-800 p-4">
-        <div class="mb-3 rounded-xl bg-slate-900 p-3"><p class="truncate text-sm font-semibold">{{ auth.user?.name }}</p><p class="truncate text-xs text-slate-400">{{ auth.user?.email }}</p></div>
+        <div class="mb-3 rounded-xl bg-slate-900 p-3">
+          <p class="truncate text-sm font-semibold">{{ auth.user?.name }}</p>
+          <p class="truncate text-xs text-slate-400">{{ auth.user?.email }}</p>
+          <p class="mt-2 inline-flex rounded-full bg-slate-800 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-300">{{ auth.user?.role }}</p>
+        </div>
         <button class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-300 hover:bg-slate-900 hover:text-white" @click="logout"><LogOut :size="18" /> Sair</button>
       </div>
     </aside>
+
     <div class="lg:pl-72">
-      <header class="sticky top-0 z-20 flex h-20 items-center justify-between border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6 lg:px-8">
-        <button class="rounded-xl border border-slate-200 p-2.5 text-slate-600 lg:hidden" @click="app.sidebarOpen = true"><Menu :size="20" /></button>
-        <div class="hidden lg:block"><p class="text-xs font-medium uppercase tracking-wider text-slate-400">{{ auth.isControlPlane ? 'Control Plane' : app.tenant?.hostname }}</p></div>
-        <div class="ml-auto flex items-center gap-2"><button class="rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50"><Bell :size="19" /></button></div>
+      <header class="sticky top-0 z-20 flex h-20 items-center border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6 lg:px-8">
+        <button class="rounded-xl border border-slate-200 p-2.5 text-slate-600 lg:hidden" aria-label="Abrir menu" @click="app.sidebarOpen = true"><Menu :size="20" /></button>
+        <div class="ml-3 min-w-0 lg:ml-0">
+          <p class="truncate text-sm font-semibold text-slate-900">{{ currentTitle }}</p>
+          <p class="truncate text-xs text-slate-400">{{ auth.isControlPlane ? 'control plane isolado' : app.tenant?.hostname || 'tenant plane' }}</p>
+        </div>
+        <div class="ml-auto flex items-center gap-2">
+          <button v-if="!auth.isControlPlane" class="rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50" title="Atualizar contexto" @click="refreshContext"><RefreshCw :size="18" /></button>
+          <div class="relative">
+            <button class="rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50" aria-label="Notificações" @click="notificationsOpen = !notificationsOpen"><Bell :size="19" /></button>
+            <div v-if="notificationsOpen" class="absolute right-0 mt-2 w-80 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+              <div class="flex items-center justify-between"><p class="font-semibold">Central operacional</p><ChevronDown :size="16" class="text-slate-400" /></div>
+              <p class="mt-3 text-sm leading-6 text-slate-500">Alertas de cobrança, integrações, filas, domínios e backups aparecem nos respectivos painéis operacionais.</p>
+            </div>
+          </div>
+        </div>
       </header>
       <main class="p-4 sm:p-6 lg:p-8"><RouterView /></main>
     </div>

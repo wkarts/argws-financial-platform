@@ -1,34 +1,63 @@
 # Changelog
 
-## 0.1.0-alpha.1 — 2026-08-20
+## 1.0.0-rc.2 — 2026-08-20
+
+### Validado e corrigido
+
+- suíte backend executada com 41 testes aprovados;
+- contrato estático entre 171 chamadas HTTP do frontend e 161 rotas FastAPI validado sem divergências;
+- caminhos Alembic tornados independentes do diretório atual por meio de `%(here)s`;
+- empacotamento de release refeito para excluir `.git`, caches, bytecode, credenciais e dados de runtime;
+- geração de `MANIFEST.sha256`, inventário do pacote e verificação automática da integridade dos arquivos;
+- workflow de release preparado para usar o empacotador canônico;
+- relatório de validação atualizado para a versão efetivamente entregue.
+
+### Condição
+
+- código-fonte e distribuição operacional completos em release candidate;
+- build Docker integral e homologações bancárias/fiscais continuam dependentes do ambiente conectado e das credenciais reais.
+
+## 1.0.0-rc.1 — 2026-08-20
 
 ### Adicionado
 
-- Control Plane e Tenant Plane;
-- banco PostgreSQL isolado por tenant;
-- múltiplas empresas por tenant e RBAC por empresa;
-- provisionamento de tenant, domínio e storage;
-- Cloudflare provider e Domain Agent para SSL/domínios personalizados;
-- clientes, serviços, contratos, recorrências e recebíveis;
-- provider bancário Sandbox com boleto/PIX e PDF;
-- CNAB 240 extensível, remessa e retorno;
-- pagamentos, conciliação, recibos e NFS-e Sandbox;
-- SMTP, Evolution API, Outbox, RabbitMQ e Celery;
-- documentos imutáveis no MinIO/S3;
-- backup/restore local, S3, Google Drive e Dropbox;
-- importação do padrão Financeiro Vitor;
-- frontend Vue 3/Tailwind PWA;
-- Docker Compose, CloudPanel, Dockge, GitHub Actions e documentação completa;
-- rate limiting com Redis;
-- migrations Alembic explícitas para Control Plane e tenant;
-- rotação automática de refresh token e logout com revogação;
-- Domain Agent reconciliando domínios `WAITING_SSL` e `ACTIVE`;
-- validação distinta para pacote-fonte e stack provisionada.
+- Control Plane completo para tenants, planos, limites, domínios, configurações, usuários, integrações, API keys, suporte auditado, consumo, provisionamento, backup e restore;
+- Tenant Plane ampliado com contatos, serviços, contratos, recebíveis, pagamentos, estornos, negociações, links públicos, importações, exportações, API keys e webhooks;
+- Pix Automático com mandatos e instruções;
+- CNAB 400 extensível;
+- importação OFX e CSV;
+- adapter Asaas;
+- enforce de capacidades e limites dos planos;
+- papéis e permissões padrão;
+- migrations adicionais do Control Plane e Tenant Plane;
+- workers especializados e migration de todos os tenants existentes;
+- portal público de pagamento;
+- pacotes Docker, Dockge, CloudPanel e Portainer;
+- ACME DNS-01, agente CloudPanel e monitoramento opcional;
+- documentação completa de deploy, produto e PR.
 
-### Homologação pendente por terceiros
+### Alterado
 
-- provider bancário real;
-- layout CNAB específico de banco/carteira;
-- CNAB 400 específico;
-- provider NFS-e real municipal/nacional;
-- validação com credenciais reais SMTP/Evolution/Drive/Dropbox.
+- Compose reorganizado para serviços especializados, health checks e profiles;
+- contrato `.env.example` ampliado;
+- frontend do Control Plane e Tenant Plane ampliado;
+- Outbox e filas expandidos;
+- scripts de instalação, backup, restore, atualização e rollback revisados;
+- validador estrutural ampliado para código, frontend, Compose e deploys.
+
+### Corrigido
+
+- ausência de stack Portainer;
+- pacote Dockge incompleto;
+- automação CloudPanel insuficiente;
+- falta de ambientes específicos;
+- Control Plane demonstrativo;
+- ausência de título e descrição de PR;
+- nomenclatura e contratos inconsistentes da entrega Alpha.
+
+## 0.1.0-alpha.1 — 2026-08-20
+
+- fundação inicial da plataforma;
+- fluxo financeiro Sandbox;
+- primeira estrutura multitenant;
+- Compose e interface parciais.

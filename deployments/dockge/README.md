@@ -1,12 +1,22 @@
-# Importação no Dockge
+# Deploy no Dockge
 
-1. extraia o projeto dentro do diretório configurado como `stacksDir` do Dockge;
-2. mantenha o nome `argws-financial-platform`;
-3. execute `scripts/deploy_cloudpanel_dockge.sh --skip-up` para criar `.env` e segredos;
-4. abra a stack no Dockge;
-5. confirme o Compose;
-6. faça deploy;
-7. aguarde `financial-migrate` e `financial-init` terminarem com código 0;
-8. confirme `/health/ready` no gateway interno.
+Esta pasta não é apenas documentação: contém Compose, exemplo de ambiente e scripts operacionais.
 
-Não edite segredos diretamente no `compose.yaml`; use `.env` com permissão restrita.
+## Modo recomendado
+
+1. Extraia o projeto inteiro no diretório de stacks do Dockge.
+2. Copie `.env.example` da raiz para `.env`.
+3. Execute `python3 scripts/generate_secrets.py --env .env`.
+4. No Dockge, selecione o `compose.yaml` da raiz ou `deployments/dockge/compose.yaml`.
+5. Execute `deployments/dockge/install.sh` na primeira instalação.
+
+## Arquivos
+
+- `compose.yaml`: stack completa baseada em imagens publicadas no GHCR;
+- `.env.example`: variáveis mínimas para importação;
+- `install.sh`: valida, constrói/sobe e espera readiness;
+- `update.sh`: backup, atualização, migrations e healthcheck;
+- `rollback.sh`: troca a versão das imagens;
+- `healthcheck.sh`: estado dos containers e readiness.
+
+O Dockge deve preservar o `Host` no proxy reverso do CloudPanel para que o Tenant Resolver selecione corretamente o banco isolado.

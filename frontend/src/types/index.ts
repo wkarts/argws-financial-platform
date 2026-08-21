@@ -161,3 +161,166 @@ export interface Payment {
   payment_method: string
   status: string
 }
+
+export interface PlatformPlan {
+  id: string
+  code: string
+  name: string
+  description?: string
+  monthly_price: string
+  annual_price: string
+  features: Record<string, boolean>
+  limits: Record<string, number | string | null>
+  sort_order: number
+  is_public: boolean
+  is_active: boolean
+  created_at: string
+}
+
+export interface PlatformUser {
+  id: string
+  name: string
+  email: string
+  role: string
+  is_active: boolean
+  last_login_at?: string
+  locked_until?: string
+  created_at: string
+}
+
+export interface PlatformSetting {
+  id: string
+  key: string
+  category: string
+  value: Record<string, unknown>
+  description?: string
+  is_secret: boolean
+  updated_at: string
+}
+
+export interface ProvisioningJob {
+  id: string
+  tenant_id: string
+  operation: string
+  status: string
+  current_step: string
+  progress: number
+  attempts: number
+  correlation_id: string
+  events: Array<{ at: string; step: string; level: string; message: string }>
+  started_at?: string
+  finished_at?: string
+  last_error?: string
+  created_at: string
+}
+
+export interface BankAccount {
+  id: string
+  company_id: string
+  bank_code: string
+  bank_name: string
+  branch: string
+  branch_digit?: string
+  account: string
+  account_digit?: string
+  account_type: string
+  pix_key_type?: string
+  pix_key?: string
+  is_default: boolean
+  is_active: boolean
+}
+
+export interface BankAgreement {
+  id: string
+  company_id: string
+  bank_account_id: string
+  name: string
+  provider: string
+  environment: string
+  agreement_number?: string
+  wallet?: string
+  beneficiary_code?: string
+  cnab_layout: string
+  settings: Record<string, unknown>
+  is_active: boolean
+}
+
+export interface PixAutomaticMandate {
+  id: string
+  company_id: string
+  customer_id: string
+  contract_id?: string
+  bank_agreement_id: string
+  provider: string
+  external_id: string
+  frequency: string
+  start_date: string
+  finish_date?: string
+  fixed_amount?: string
+  min_limit_value?: string
+  description: string
+  payment_creation_mode: string
+  retry_policy: string
+  status: string
+  authorization_url?: string
+  qr_copy_paste?: string
+  qr_encoded_image?: string
+  activated_at?: string
+  cancelled_at?: string
+  last_synced_at?: string
+  last_error?: string
+  created_at: string
+}
+
+export interface NotificationItem {
+  id: string
+  channel: string
+  provider: string
+  destination: string
+  subject?: string
+  body: string
+  status: string
+  scheduled_at: string
+  sent_at?: string
+  delivered_at?: string
+  read_at?: string
+  attempts: number
+  last_error?: string
+}
+
+export interface Negotiation {
+  id: string
+  company_id: string
+  customer_id: string
+  original_amount: string
+  negotiated_amount: string
+  installment_count: number
+  first_due_date: string
+  status: string
+  terms: Record<string, unknown>
+  approved_at?: string
+  cancelled_at?: string
+  created_at: string
+}
+
+export interface PaymentLink {
+  id: string
+  receivable_id: string
+  token_prefix: string
+  public_url?: string
+  expires_at?: string
+  max_views?: number
+  view_count: number
+  is_active: boolean
+  created_at: string
+}
+
+export interface TenantRole {
+  id: string
+  code: string
+  name: string
+  description?: string
+  permissions: string[]
+  is_system: boolean
+  is_active: boolean
+}

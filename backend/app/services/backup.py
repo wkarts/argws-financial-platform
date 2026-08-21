@@ -114,9 +114,9 @@ class BackupService:
         await run_command(["rclone", "copyto", str(archive), target, "--checksum", "--retries", "5"], env=env)
         return {"status": "UPLOADED", "target": target}
 
-    async def _upload_s3(self, archive: Path) -> dict[str, Any]:
+    async def _upload_s3(self, archive: Path, *, prefix: str = "full") -> dict[str, Any]:
         await self.s3.ensure_bucket(settings.backup_s3_bucket)
-        key = f"full/{archive.name}"
+        key = f"{prefix.strip('/')}/{archive.name}"
         stored = await self.s3.upload_file(
             settings.backup_s3_bucket, key, archive, "application/zstd"
         )
@@ -198,7 +198,7 @@ class BackupService:
                 archive = encrypted
             destinations: dict[str, Any] = {"local": {"status": "CREATED", "path": str(archive)}}
             if settings.backup_upload_s3:
-                destinations["s3"] = await self._upload_s3(archive)
+                destinations["s3"] = await self._upload_s3(archive, prefix="full")
             if settings.backup_google_drive_enabled:
                 destinations["google_drive"] = await self._upload_rclone(
                     archive, settings.backup_google_drive_remote
@@ -224,12 +224,131 @@ class BackupService:
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    async def apply_local_retention(self) -> None:
+    async def create_tenant(self, tenant_id: UUID) -> BackupRun:
+        """Cria um pacote portável contendo somente banco e objetos de um tenant."""
+
+        run = BackupRun(
+            scope="TENANT",
+            tenant_id=tenant_id,
+            status="RUNNING",
+            started_at=datetime.now(UTC),
+        )
+        self.session.add(run)
+        await self.session.commit()
+        await self.session.refresh(run)
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        work_root = settings.backup_dir / "work"
+        final_root = settings.backup_dir / "archives"
+        work_root.mkdir(parents=True, exist_ok=True)
+        final_root.mkdir(parents=True, exist_ok=True)
+        temp_dir = Path(tempfile.mkdtemp(prefix=f"backup-tenant-{timestamp}-", dir=work_root))
+        archive: Path | None = None
+        try:
+            tenant = await self.session.scalar(
+                select(Tenant)
+                .where(Tenant.id == tenant_id)
+                .options(selectinload(Tenant.database), selectinload(Tenant.storage))
+            )
+            if tenant is None:
+                raise BackupError(f"Tenant não encontrado: {tenant_id}")
+            if tenant.database is None:
+                raise BackupError(f"Tenant {tenant.slug} não possui banco provisionado.")
+
+            database_dir = temp_dir / "databases"
+            database_dir.mkdir(parents=True)
+            entry: dict[str, Any] = {
+                "tenant_id": str(tenant.id),
+                "slug": tenant.slug,
+                "database": await self._dump_database(
+                    database_dir,
+                    tenant.database.database_name,
+                    tenant.database.database_user,
+                    secret_cipher.decrypt(tenant.database.encrypted_password),
+                    f"tenant-{tenant.slug}.dump",
+                ),
+            }
+            if tenant.storage and tenant.storage.status == "ACTIVE":
+                entry["storage"] = await self._copy_bucket(temp_dir, tenant.storage.bucket)
+
+            manifest: dict[str, Any] = {
+                "format": 1,
+                "application": settings.app_name,
+                "version": settings.app_version,
+                "created_at": datetime.now(UTC).isoformat(),
+                "scope": "TENANT",
+                "tenant_id": str(tenant.id),
+                "tenant_slug": tenant.slug,
+                "tenants": [entry],
+            }
+            (temp_dir / "manifest.json").write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            checksums = [
+                f"{sha256_file(item)}  {item.relative_to(temp_dir)}"
+                for item in sorted(path for path in temp_dir.rglob("*") if path.is_file())
+            ]
+            (temp_dir / "checksums.sha256").write_text(
+                "\n".join(checksums) + "\n",
+                encoding="utf-8",
+            )
+            archive = final_root / f"argws-financial-tenant-{tenant.slug}-{timestamp}.tar.zst"
+            await run_command(
+                ["tar", "--zstd", "-cf", str(archive), "-C", str(temp_dir), "."],
+                env={**os.environ, "ZSTD_CLEVEL": str(settings.backup_compress_level)},
+            )
+            if settings.backup_encryption_recipient:
+                encrypted = archive.with_suffix(archive.suffix + ".age")
+                await run_command(
+                    ["age", "-r", settings.backup_encryption_recipient, "-o", str(encrypted), str(archive)]
+                )
+                archive.unlink()
+                archive = encrypted
+
+            destinations: dict[str, Any] = {"local": {"status": "CREATED", "path": str(archive)}}
+            if settings.backup_upload_s3:
+                destinations["s3"] = await self._upload_s3(
+                    archive,
+                    prefix=f"tenant/{tenant.id}",
+                )
+            if settings.backup_google_drive_enabled:
+                destinations["google_drive"] = await self._upload_rclone(
+                    archive,
+                    f"{settings.backup_google_drive_remote.rstrip('/')}/tenants/{tenant.slug}",
+                )
+            if settings.backup_dropbox_enabled:
+                destinations["dropbox"] = await self._upload_rclone(
+                    archive,
+                    f"{settings.backup_dropbox_remote.rstrip('/')}/tenants/{tenant.slug}",
+                )
+
+            run.status = "SUCCEEDED"
+            run.path = str(archive)
+            run.checksum = sha256_file(archive)
+            run.size_bytes = archive.stat().st_size
+            run.manifest = manifest
+            run.destinations = destinations
+            run.finished_at = datetime.now(UTC)
+            await self.session.commit()
+            await self.apply_local_retention(
+                pattern=f"argws-financial-tenant-{tenant.slug}-*.tar.zst*"
+            )
+            return run
+        except Exception as exc:
+            run.status = "FAILED"
+            run.last_error = str(exc)[:4000]
+            run.finished_at = datetime.now(UTC)
+            await self.session.commit()
+            raise
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    async def apply_local_retention(self, *, pattern: str = "argws-financial-full-*.tar.zst*") -> None:
         root = settings.backup_dir / "archives"
         if not root.exists():
             return
         files = sorted(
-            (item for item in root.glob("argws-financial-full-*.tar.zst*") if item.is_file()),
+            (item for item in root.glob(pattern) if item.is_file()),
             key=lambda item: item.stat().st_mtime,
             reverse=True,
         )

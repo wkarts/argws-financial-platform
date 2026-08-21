@@ -68,6 +68,8 @@ def main() -> int:
         "DOMAIN_RECONCILIATION_TOKEN": token(48),
         "EVOLUTION_WEBHOOK_SECRET": token(48),
         "BANKING_WEBHOOK_SECRET": token(48),
+        "GRAFANA_ADMIN_PASSWORD": token(24),
+        "CLOUDPANEL_SITE_USER_PASSWORD": token(24),
     }
     values: dict[str, str] = {}
     for key, value in generated.items():
@@ -89,22 +91,26 @@ def main() -> int:
     args.env.write_text("\n".join(replace(lines, values)) + "\n", encoding="utf-8")
     args.env.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
+    final_values = parse(replace(lines, values))
     credentials = args.env.parent / ".bootstrap-credentials.txt"
-    credentials.write_text(
-        "\n".join([
-            "ARGWS Financial Platform — credenciais iniciais",
-            f"Control Plane: {current.get('PUBLIC_SCHEME','https')}://{current.get('CONTROL_PLANE_HOST','control.localhost')}",
-            f"Usuário: {current.get('PLATFORM_ADMIN_EMAIL','admin@example.com')}",
-            f"Senha: {values['PLATFORM_ADMIN_PASSWORD']}",
+    credential_lines = [
+        "ARGWS Financial Platform — credenciais iniciais",
+        f"Control Plane: {final_values.get('PUBLIC_SCHEME','https')}://{final_values.get('CONTROL_PLANE_HOST','control.localhost')}",
+        f"Usuário: {final_values.get('PLATFORM_ADMIN_EMAIL','admin@example.com')}",
+        f"Senha: {values['PLATFORM_ADMIN_PASSWORD']}",
+    ]
+    if final_values.get("BOOTSTRAP_DEMO_TENANT", "false").lower() == "true":
+        credential_lines.extend([
             "",
-            f"Tenant demo: {current.get('PUBLIC_SCHEME','https')}://{current.get('DEMO_TENANT_SLUG','demo')}.{current.get('TENANT_DOMAIN_ROOT','localhost')}",
-            f"Usuário demo: {current.get('DEMO_TENANT_ADMIN_EMAIL','admin.demo@example.com')}",
+            f"Tenant demo: {final_values.get('PUBLIC_SCHEME','https')}://{final_values.get('DEMO_TENANT_SLUG','demo')}.{final_values.get('TENANT_DOMAIN_ROOT','localhost')}",
+            f"Usuário demo: {final_values.get('DEMO_TENANT_ADMIN_EMAIL','admin.demo@example.com')}",
             f"Senha demo: {values['DEMO_TENANT_ADMIN_PASSWORD']}",
-            "",
-            "Troque as senhas após o primeiro acesso e guarde este arquivo fora do servidor.",
-        ]) + "\n",
-        encoding="utf-8",
-    )
+        ])
+    credential_lines.extend([
+        "",
+        "Troque as senhas após o primeiro acesso e guarde este arquivo fora do servidor.",
+    ])
+    credentials.write_text("\n".join(credential_lines) + "\n", encoding="utf-8")
     credentials.chmod(stat.S_IRUSR | stat.S_IWUSR)
     print(f"Segredos gravados em {args.env}")
     print(f"Credenciais iniciais gravadas em {credentials}")

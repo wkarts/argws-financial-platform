@@ -16,11 +16,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_tenant_context_dep, get_tenant_db
 from app.core.config import settings
 from app.core.errors import APIError
+from app.core.secrets import secret_cipher
 from app.core.tenant_context import TenantContext
 from app.core.webhook_security import validate_webhook_timestamp
-from app.models.tenant import Charge, IntegrationSetting, Notification, WebhookEvent
+from app.models.tenant import Charge, IntegrationSetting, Notification, Receivable, WebhookEvent
 from app.services.billing import BillingService
-from app.core.secrets import secret_cipher
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["Webhooks"])
 
@@ -66,7 +66,8 @@ async def persist_webhook(
     if inserted_id is None:
         existing = await session.scalar(
             select(WebhookEvent).where(
-                WebhookEvent.provider == provider, WebhookEvent.event_id == event_id
+                WebhookEvent.provider == provider,
+                WebhookEvent.event_id == event_id,
             )
         )
         if existing is None:
@@ -82,29 +83,58 @@ async def persist_webhook(
     return item, True
 
 
-async def configured_webhook_secrets(session: AsyncSession, providers: list[str], global_secret: str = "") -> list[str]:
+async def configured_webhook_secrets(
+    session: AsyncSession,
+    providers: list[str],
+    global_secret: str = "",
+) -> list[str]:
     values = [global_secret] if global_secret else []
-    items = list((await session.execute(
-        select(IntegrationSetting).where(
-            IntegrationSetting.provider.in_([item.upper() for item in providers]),
-            IntegrationSetting.is_enabled.is_(True),
-        )
-    )).scalars())
+    items = list(
+        (
+            await session.execute(
+                select(IntegrationSetting).where(
+                    IntegrationSetting.provider.in_([item.upper() for item in providers]),
+                    IntegrationSetting.is_enabled.is_(True),
+                )
+            )
+        ).scalars()
+    )
     for item in items:
         if not item.encrypted_secrets:
             continue
         try:
             data = json.loads(secret_cipher.decrypt(item.encrypted_secrets))
-            value = str(data.get("webhook_secret") or "")
+            value = str(data.get("webhook_secret") or data.get("auth_token") or "")
             if value:
                 values.append(value)
-        except Exception:
+        except Exception:  # segredo inválido é tratado como integração sem credencial
             continue
-    return values
+    return list(dict.fromkeys(values))
 
 
 def valid_shared_secret(provided: str, expected: list[str]) -> bool:
-    return bool(provided and any(hmac.compare_digest(provided, value) for value in expected if value))
+    return bool(
+        provided
+        and any(hmac.compare_digest(provided, value) for value in expected if value)
+    )
+
+
+def parse_provider_datetime(value: Any) -> datetime:
+    if value in (None, ""):
+        return datetime.now(UTC)
+    text = str(value).strip().replace("Z", "+00:00")
+    for candidate in (text, text.replace(" ", "T")):
+        try:
+            parsed = datetime.fromisoformat(candidate)
+            return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed
+        except ValueError:
+            continue
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(text, fmt).replace(tzinfo=UTC)
+        except ValueError:
+            continue
+    return datetime.now(UTC)
 
 
 @router.post("/evolution", response_model=dict)
@@ -117,7 +147,8 @@ async def evolution_webhook(
 ) -> dict:
     try:
         validate_webhook_timestamp(
-            x_webhook_timestamp, max_age_seconds=settings.webhook_max_age_seconds
+            x_webhook_timestamp,
+            max_age_seconds=settings.webhook_max_age_seconds,
         )
     except ValueError as exc:
         raise APIError("STALE_WEBHOOK", "Timestamp do webhook inválido ou expirado.", 401) from exc
@@ -126,7 +157,11 @@ async def evolution_webhook(
         payload: dict[str, Any] = json.loads(raw or b"{}")
     except json.JSONDecodeError as exc:
         raise APIError("INVALID_WEBHOOK_JSON", "Payload JSON inválido.", 400) from exc
-    expected = await configured_webhook_secrets(session, ["EVOLUTION"], settings.evolution_webhook_secret)
+    expected = await configured_webhook_secrets(
+        session,
+        ["EVOLUTION"],
+        settings.evolution_webhook_secret,
+    )
     signature_valid = valid_shared_secret(x_webhook_secret, expected)
     if not expected and settings.app_env == "production":
         raise APIError("WEBHOOK_SECRET_NOT_CONFIGURED", "Webhook Evolution sem segredo configurado.", 503)
@@ -158,7 +193,9 @@ async def evolution_webhook(
         "MESSAGES_UPSERT": "DELIVERED",
     }
     if message_id:
-        notification = await session.scalar(select(Notification).where(Notification.external_id == str(message_id)))
+        notification = await session.scalar(
+            select(Notification).where(Notification.external_id == str(message_id))
+        )
         if notification:
             notification.status = status_map.get(event_type, notification.status)
             now = datetime.now(UTC)
@@ -172,6 +209,84 @@ async def evolution_webhook(
     return {"success": True, "event_id": event_id, "tenant_id": context.tenant_id}
 
 
+async def process_asaas_event(
+    session: AsyncSession,
+    *,
+    payload: dict[str, Any],
+    event_type: str,
+    event_id: str,
+) -> None:
+    payment = payload.get("payment") if isinstance(payload.get("payment"), dict) else {}
+    external_charge_id = str(payment.get("id") or "")
+    charge = None
+    receivable_id: str | None = None
+    if external_charge_id:
+        charge = await session.scalar(
+            select(Charge).where(
+                Charge.provider == "ASAAS",
+                Charge.external_id == external_charge_id,
+            )
+        )
+        if charge:
+            receivable_id = str(charge.receivable_id)
+
+    paid_events = {
+        "PAYMENT_CONFIRMED",
+        "PAYMENT_RECEIVED",
+        "PAYMENT_RECEIVED_IN_CASH",
+        "PAYMENT_DUNNING_RECEIVED",
+    }
+    if event_type in paid_events:
+        if not charge or not receivable_id:
+            raise APIError(
+                "WEBHOOK_RECEIVABLE_NOT_RESOLVED",
+                "A cobrança Asaas recebida não está vinculada a um recebível local.",
+                422,
+                {"external_charge_id": external_charge_id},
+            )
+        amount = Decimal(str(payment.get("value") or payment.get("netValue") or "0"))
+        if amount <= 0:
+            raise APIError("WEBHOOK_PAYMENT_AMOUNT_INVALID", "Valor recebido no webhook é inválido.", 422)
+        paid_at = parse_provider_datetime(
+            payment.get("paymentDate")
+            or payment.get("clientPaymentDate")
+            or payment.get("confirmedDate")
+            or payload.get("dateCreated")
+        )
+        await BillingService(session).register_payment(
+            receivable_id=receivable_id,
+            charge_id=str(charge.id),
+            provider="ASAAS",
+            # O ID da cobrança é estável entre PAYMENT_CONFIRMED e PAYMENT_RECEIVED,
+            # evitando dupla baixa quando os dois eventos forem enviados.
+            external_id=external_charge_id,
+            end_to_end_id=payment.get("pixTransaction") or payment.get("endToEndIdentifier"),
+            amount=amount,
+            paid_at=paid_at,
+            payment_method=str(payment.get("billingType") or "UNDEFINED"),
+            raw_payload=payload,
+        )
+        charge.status = "PAID"
+        return
+
+    if charge is None:
+        return
+    charge_status = {
+        "PAYMENT_CREATED": "PENDING",
+        "PAYMENT_UPDATED": str(payment.get("status") or "PENDING").upper(),
+        "PAYMENT_OVERDUE": "OVERDUE",
+        "PAYMENT_DELETED": "CANCELLED",
+        "PAYMENT_REFUNDED": "REFUNDED",
+        "PAYMENT_REFUND_IN_PROGRESS": "REFUNDING",
+        "PAYMENT_CHARGEBACK_REQUESTED": "CHARGEBACK",
+    }.get(event_type)
+    if charge_status:
+        charge.status = charge_status
+        receivable = await session.get(Receivable, charge.receivable_id)
+        if receivable and charge_status == "OVERDUE" and receivable.status not in {"PAID", "CANCELLED"}:
+            receivable.status = "OVERDUE"
+
+
 @router.post("/banking/{provider}", response_model=dict)
 async def banking_webhook(
     provider: str,
@@ -180,65 +295,94 @@ async def banking_webhook(
     session: AsyncSession = Depends(get_tenant_db),
     x_webhook_secret: str = Header(default=""),
     x_webhook_timestamp: str = Header(default=""),
+    asaas_access_token: str = Header(default="", alias="asaas-access-token"),
 ) -> dict:
-    try:
-        validate_webhook_timestamp(
-            x_webhook_timestamp, max_age_seconds=settings.webhook_max_age_seconds
-        )
-    except ValueError as exc:
-        raise APIError("STALE_WEBHOOK", "Timestamp do webhook inválido ou expirado.", 401) from exc
+    provider_name = provider.upper()
+    if provider_name != "ASAAS":
+        try:
+            validate_webhook_timestamp(
+                x_webhook_timestamp,
+                max_age_seconds=settings.webhook_max_age_seconds,
+            )
+        except ValueError as exc:
+            raise APIError("STALE_WEBHOOK", "Timestamp do webhook inválido ou expirado.", 401) from exc
     raw = await request.body()
     try:
         payload: dict[str, Any] = json.loads(raw or b"{}")
     except json.JSONDecodeError as exc:
         raise APIError("INVALID_WEBHOOK_JSON", "Payload JSON inválido.", 400) from exc
-    # Adapters reais podem substituir esta validação por mTLS/JWS/HMAC conforme o banco.
-    # O endpoint genérico nunca aceita segredo vindo do próprio payload.
-    provider_name = provider.upper()
+
     expected = await configured_webhook_secrets(
-        session, [provider_name, f"BANKING_{provider_name}"], settings.banking_webhook_secret
+        session,
+        [provider_name, f"BANKING_{provider_name}"],
+        settings.banking_webhook_secret,
     )
+    provided_secret = asaas_access_token if provider_name == "ASAAS" else x_webhook_secret
     if not expected and settings.app_env == "production":
         raise APIError("WEBHOOK_SECRET_NOT_CONFIGURED", "Webhook bancário sem segredo configurado.", 503)
-    if expected and not valid_shared_secret(x_webhook_secret, expected):
+    signature_valid = valid_shared_secret(provided_secret, expected) if expected else settings.app_env != "production"
+    if expected and not signature_valid:
         raise APIError("INVALID_WEBHOOK_SIGNATURE", "Assinatura do webhook inválida.", 401)
-    event_id = payload_event_id(provider.upper(), payload, raw)
+
+    event_id = payload_event_id(provider_name, payload, raw)
     event_type = str(payload.get("event") or payload.get("type") or "PAYMENT").upper()
     event, created = await persist_webhook(
         session,
-        provider=provider.upper(),
+        provider=provider_name,
         event_id=event_id,
         event_type=event_type,
         payload=payload,
         raw=raw,
-        signature_valid=True,
+        signature_valid=signature_valid,
     )
     if not created:
         return {"success": True, "idempotent": True, "event_id": event_id}
-    if event_type in {"PAYMENT", "PAID", "CHARGE.PAID", "PIX_RECEIVED"}:
-        receivable_id = payload.get("receivable_id")
-        charge_external_id = payload.get("charge_external_id") or payload.get("external_charge_id")
-        charge = None
-        if charge_external_id:
-            charge = await session.scalar(
-                select(Charge).where(Charge.provider == provider.upper(), Charge.external_id == str(charge_external_id))
+
+    try:
+        if provider_name == "ASAAS":
+            await process_asaas_event(
+                session,
+                payload=payload,
+                event_type=event_type,
+                event_id=event_id,
             )
-            if charge:
-                receivable_id = str(charge.receivable_id)
-        if not receivable_id:
-            raise APIError("WEBHOOK_RECEIVABLE_NOT_RESOLVED", "Não foi possível identificar o recebível.", 422)
-        await BillingService(session).register_payment(
-            receivable_id=str(receivable_id),
-            charge_id=str(charge.id) if charge else None,
-            provider=provider.upper(),
-            external_id=str(payload.get("payment_id") or event_id),
-            end_to_end_id=payload.get("end_to_end_id") or payload.get("endToEndId"),
-            amount=Decimal(str(payload["amount"])),
-            paid_at=datetime.fromisoformat(str(payload.get("paid_at") or datetime.now(UTC).isoformat())),
-            payment_method=str(payload.get("payment_method") or "PIX"),
-            raw_payload=payload,
-        )
-    event.status = "PROCESSED"
-    event.processed_at = datetime.now(UTC)
+        elif event_type in {"PAYMENT", "PAID", "CHARGE.PAID", "PIX_RECEIVED"}:
+            receivable_id = payload.get("receivable_id")
+            charge_external_id = payload.get("charge_external_id") or payload.get("external_charge_id")
+            charge = None
+            if charge_external_id:
+                charge = await session.scalar(
+                    select(Charge).where(
+                        Charge.provider == provider_name,
+                        Charge.external_id == str(charge_external_id),
+                    )
+                )
+                if charge:
+                    receivable_id = str(charge.receivable_id)
+            if not receivable_id:
+                raise APIError(
+                    "WEBHOOK_RECEIVABLE_NOT_RESOLVED",
+                    "Não foi possível identificar o recebível.",
+                    422,
+                )
+            await BillingService(session).register_payment(
+                receivable_id=str(receivable_id),
+                charge_id=str(charge.id) if charge else None,
+                provider=provider_name,
+                external_id=str(payload.get("payment_id") or event_id),
+                end_to_end_id=payload.get("end_to_end_id") or payload.get("endToEndId"),
+                amount=Decimal(str(payload["amount"])),
+                paid_at=parse_provider_datetime(payload.get("paid_at")),
+                payment_method=str(payload.get("payment_method") or "PIX"),
+                raw_payload=payload,
+            )
+        event.status = "PROCESSED"
+        event.processed_at = datetime.now(UTC)
+    except Exception as exc:
+        event.status = "FAILED"
+        event.last_error = str(exc)[:2000]
+        event.processed_at = datetime.now(UTC)
+        await session.commit()
+        raise
     await session.commit()
     return {"success": True, "event_id": event_id, "tenant_id": context.tenant_id}

@@ -203,6 +203,8 @@ async def add_domain(
     )
     if tenant is None:
         raise APIError("TENANT_NOT_FOUND", "Tenant não encontrado.", 404)
+    if tenant.features.get("custom_domain") is False:
+        raise APIError("FEATURE_NOT_AVAILABLE", "Domínio personalizado não está habilitado no plano do tenant.", 403)
     domain = await domain_service.add_custom_domain(session, tenant, payload.hostname, payload.is_primary)
     return SuccessResponse(data=DomainRead.model_validate(domain))
 

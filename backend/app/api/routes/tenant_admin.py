@@ -3,11 +3,11 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_tenant_db, require_permission
+from app.api.deps import get_tenant_db, get_tenant_entitlements, require_permission
 from app.core.errors import APIError
 from app.core.security import hash_password
 from app.models.tenant import Company, TenantRefreshToken, TenantUser, UserCompany
@@ -15,52 +15,13 @@ from app.schemas.auth import AuthUser
 from app.schemas.common import SuccessResponse
 from app.schemas.tenant import PasswordResetInput, TenantUserCreate, TenantUserUpdate
 from app.services.audit import tenant_audit
+from app.services.bootstrap_defaults import ROLE_DEFINITIONS
+from app.services.entitlements import TenantEntitlements
 
 router = APIRouter(prefix="/api/v1", tags=["Tenant - Administração"])
 
-ROLE_PRESETS: dict[str, list[str]] = {
-    "TENANT_ADMIN": ["*"],
-    "FINANCE_MANAGER": [
-        "companies.read", "customers.read", "customers.create", "customers.update",
-        "services.read", "services.create", "contracts.read", "contracts.create",
-        "receivables.read", "receivables.create", "charges.read", "charges.create",
-        "payments.read", "payments.create", "banking.read", "banking.manage",
-        "reconciliation.read", "reconciliation.manage", "notifications.read",
-        "notifications.manage", "integrations.read", "receipts.read", "receipts.create",
-        "fiscal.read", "fiscal.create", "documents.read", "audit.read",
-    ],
-    "FINANCE_OPERATOR": [
-        "companies.read", "customers.read", "customers.create", "customers.update",
-        "services.read", "contracts.read", "receivables.read", "receivables.create",
-        "charges.read", "charges.create", "payments.read", "payments.create",
-        "banking.read", "reconciliation.read", "notifications.read", "receipts.read",
-        "receipts.create", "fiscal.read", "documents.read",
-    ],
-    "COLLECTION_OPERATOR": [
-        "companies.read", "customers.read", "contracts.read", "receivables.read",
-        "charges.read", "charges.create", "notifications.read", "notifications.manage",
-    ],
-    "TREASURY": [
-        "companies.read", "receivables.read", "charges.read", "payments.read",
-        "payments.create", "banking.read", "banking.manage", "reconciliation.read",
-        "reconciliation.manage", "documents.read",
-    ],
-    "FISCAL": [
-        "companies.read", "customers.read", "receivables.read", "payments.read",
-        "fiscal.read", "fiscal.create", "receipts.read", "documents.read",
-    ],
-    "AUDITOR": [
-        "companies.read", "customers.read", "services.read", "contracts.read",
-        "receivables.read", "charges.read", "payments.read", "banking.read",
-        "reconciliation.read", "notifications.read", "fiscal.read", "receipts.read",
-        "documents.read", "audit.read", "integrations.read",
-    ],
-    "VIEWER": [
-        "companies.read", "customers.read", "services.read", "contracts.read",
-        "receivables.read", "charges.read", "payments.read", "banking.read",
-        "reconciliation.read", "fiscal.read", "receipts.read", "documents.read",
-    ],
-}
+ROLE_PRESETS = {item["code"]: list(item["permissions"]) for item in ROLE_DEFINITIONS}
+
 
 
 def serialize_user(item: TenantUser) -> dict:
@@ -110,7 +71,10 @@ async def create_user(
     payload: TenantUserCreate,
     actor: AuthUser = Depends(require_permission("users.manage")),
     session: AsyncSession = Depends(get_tenant_db),
+    entitlements: TenantEntitlements = Depends(get_tenant_entitlements),
 ) -> SuccessResponse[dict]:
+    user_count = await session.scalar(select(func.count()).select_from(TenantUser)) or 0
+    entitlements.enforce_limit("users", int(user_count))
     email = str(payload.email).lower()
     if await session.scalar(select(TenantUser.id).where(TenantUser.email == email)):
         raise APIError("USER_EMAIL_EXISTS", "E-mail já cadastrado neste tenant.", 409)

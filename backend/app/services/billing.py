@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -8,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.errors import APIError
+from app.core.secrets import secret_cipher
 from app.models.tenant import BankAgreement, Charge, Customer, OutboxEvent, Payment, Receivable
 from app.providers.banking import BankChargeRequest, BankCustomer, banking_providers
 
@@ -47,12 +50,19 @@ class BillingService:
                     409,
                 )
             provider_name = agreement.provider
+            credentials = (
+                json.loads(secret_cipher.decrypt(agreement.encrypted_credentials))
+                if agreement.encrypted_credentials
+                else {}
+            )
             agreement_data = {
                 "id": str(agreement.id),
                 "number": agreement.agreement_number,
                 "wallet": agreement.wallet,
                 "beneficiary_code": agreement.beneficiary_code,
+                "environment": agreement.environment,
                 "settings": agreement.settings,
+                "credentials": credentials,
             }
 
         active_charge = await self.session.scalar(
@@ -146,6 +156,7 @@ class BillingService:
         charge_id: str | None = None,
         end_to_end_id: str | None = None,
         raw_payload: dict[str, object] | None = None,
+        commit: bool = True,
     ) -> Payment:
         existing = await self.session.scalar(
             select(Payment).where(Payment.provider == provider, Payment.external_id == external_id)
@@ -207,6 +218,9 @@ class BillingService:
                 },
             )
         )
-        await self.session.commit()
-        await self.session.refresh(payment)
+        if commit:
+            await self.session.commit()
+            await self.session.refresh(payment)
+        else:
+            await self.session.flush()
         return payment

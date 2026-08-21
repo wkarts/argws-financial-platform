@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -199,3 +200,101 @@ class BackupRun(UUIDPrimaryKeyMixin, TimestampMixin, PlatformBase):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class PlatformPlan(UUIDPrimaryKeyMixin, TimestampMixin, PlatformBase):
+    """Plano comercial e técnico aplicado aos tenants."""
+
+    __tablename__ = "platform_plans"
+
+    code: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    monthly_price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
+    annual_price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False, default=0)
+    features: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    limits: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class PlatformSetting(UUIDPrimaryKeyMixin, TimestampMixin, PlatformBase):
+    __tablename__ = "platform_settings"
+
+    key: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
+    category: Mapped[str] = mapped_column(String(64), nullable=False, default="GENERAL", index=True)
+    value: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    is_secret: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    description: Mapped[str | None] = mapped_column(Text)
+
+
+class PlatformIntegration(UUIDPrimaryKeyMixin, TimestampMixin, PlatformBase):
+    __tablename__ = "platform_integrations"
+
+    provider: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    public_config: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    encrypted_secrets: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    health_status: Mapped[str | None] = mapped_column(String(32))
+    health_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class TenantUsageSnapshot(UUIDPrimaryKeyMixin, PlatformBase):
+    __tablename__ = "tenant_usage_snapshots"
+    __table_args__ = (Index("ix_usage_tenant_period", "tenant_id", "period"),)
+
+    tenant_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    period: Mapped[str] = mapped_column(String(7), nullable=False)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class SupportSession(UUIDPrimaryKeyMixin, TimestampMixin, PlatformBase):
+    __tablename__ = "support_sessions"
+    __table_args__ = (Index("ix_support_tenant_status", "tenant_id", "status"),)
+
+    platform_user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("platform_users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tenant_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RestoreRun(UUIDPrimaryKeyMixin, TimestampMixin, PlatformBase):
+    __tablename__ = "restore_runs"
+
+    backup_run_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("backup_runs.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="FULL")
+    tenant_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True, index=True)
+    requested_by: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
+    source_path: Mapped[str] = mapped_column(Text, nullable=False)
+    validation: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class PlatformApiKey(UUIDPrimaryKeyMixin, TimestampMixin, PlatformBase):
+    __tablename__ = "platform_api_keys"
+
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    permissions: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    allowed_ips: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

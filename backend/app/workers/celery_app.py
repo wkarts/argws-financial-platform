@@ -45,6 +45,9 @@ celery_app.conf.update(
         "app.tasks.schedule_collection_notifications": {"queue": "financial.notifications"},
         "app.tasks.dispatch_notifications": {"queue": "financial.notifications"},
         "app.tasks.backup_all": {"queue": "financial.backups"},
+        "app.tasks.backup_tenant": {"queue": "financial.backups"},
+        "app.tasks.dispatch_outbound_webhooks": {"queue": "financial.webhooks"},
+        "app.tasks.capture_tenant_usage": {"queue": "financial.default"},
     },
     task_default_queue="financial.default",
     task_default_exchange="financial",
@@ -65,6 +68,14 @@ celery_app.conf.update(
         "notifications-every-minute": {
             "task": "app.tasks.dispatch_notifications",
             "schedule": crontab(minute="*"),
+        },
+        "outbound-webhooks-every-minute": {
+            "task": "app.tasks.dispatch_outbound_webhooks",
+            "schedule": crontab(minute="*"),
+        },
+        "tenant-usage-hourly": {
+            "task": "app.tasks.capture_tenant_usage",
+            "schedule": crontab(minute="7"),
         },
         "backup-configured-cron": {
             "task": "app.tasks.backup_all",

@@ -74,13 +74,11 @@ def test_return_parser_extracts_segment_t() -> None:
     line[37:57] = "12345678901234567   "
     line[58:73] = "DOC-0001       "
     events = CNAB240ReturnParser().parse(("".join(line) + "\r\n").encode("latin-1"))
-    assert events == [
-        {
-            "segment": "T",
-            "sequence": "00001",
-            "occurrence_code": "06",
-            "our_number": "12345678901234567",
-            "document_number": "DOC-0001",
-            "raw": "".join(line),
-        }
-    ]
+    assert len(events) == 1
+    event = events[0]
+    assert event["sequence"] == "00001"
+    assert event["occurrence_code"] == "06"
+    assert event["occurrence_description"] == "Liquidação"
+    assert event["our_number"] == "12345678901234567"
+    assert event["document_number"] == "DOC-0001"
+    assert event["segments"] == {"T": "".join(line)}

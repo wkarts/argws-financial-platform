@@ -2,27 +2,30 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 from collections.abc import Awaitable, Callable
 from typing import Any
+from uuid import UUID
 
 from celery.signals import worker_process_shutdown
 from celery.utils.log import get_task_logger
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.tenant_context import TenantContext, set_tenant_context, reset_tenant_context
 from app.db.platform import PlatformSessionLocal, platform_engine
 from app.db.tenant import tenant_engines
-from app.models.platform import Tenant
+from app.models.platform import Tenant, TenantUsageSnapshot
 from app.services.backup import BackupService
 from app.services.collection_rules import CollectionRuleService
 from app.services.notifications import NotificationService
 from app.services.outbox import OutboxService
+from app.services.outbound_webhooks import OutboundWebhookService
 from app.services.provisioning import provisioning_service
 from app.services.recurrence import RecurrenceService
+from app.models.tenant import Company, Customer, Receivable, TenantUser
 from app.services.tenant_resolver import TenantResolver
 from app.workers.celery_app import celery_app
 
@@ -144,4 +147,65 @@ def backup_all(self: Any) -> str:
         async with PlatformSessionLocal() as session:
             result = await BackupService(session).create_full()
             return str(result.id)
+    return run(action())
+
+
+@celery_app.task(name="app.tasks.backup_tenant", bind=True, autoretry_for=(Exception,), retry_backoff=True, max_retries=3)
+def backup_tenant(self: Any, tenant_id: str) -> str:
+    async def action() -> str:
+        async with PlatformSessionLocal() as session:
+            result = await BackupService(session).create_tenant(UUID(tenant_id))
+            return str(result.id)
+    return run(action())
+
+
+@celery_app.task(name="app.tasks.dispatch_outbound_webhooks")
+def dispatch_outbound_webhooks() -> dict[str, int]:
+    async def callback(session: Any, _context: TenantContext) -> int:
+        return await OutboundWebhookService(session).dispatch_pending()
+    return run(for_each_active_tenant(callback))
+
+
+@celery_app.task(name="app.tasks.capture_tenant_usage")
+def capture_tenant_usage() -> dict[str, int]:
+    async def action() -> dict[str, int]:
+        captured: dict[str, int] = {}
+        async with PlatformSessionLocal() as platform_session:
+            tenants = list((await platform_session.scalars(select(Tenant).where(Tenant.status == "ACTIVE"))).all())
+            resolver = TenantResolver(platform_session)
+            period = datetime.now(UTC).strftime("%Y-%m")
+            for tenant in tenants:
+                try:
+                    context = await resolver.resolve_by_id(str(tenant.id))
+                    token = set_tenant_context(context)
+                    try:
+                        entry = await tenant_engines.get(context)
+                        async with entry.session_factory() as session:
+                            metrics = {
+                                "companies": int(await session.scalar(select(func.count()).select_from(Company)) or 0),
+                                "users": int(await session.scalar(select(func.count()).select_from(TenantUser)) or 0),
+                                "customers": int(await session.scalar(select(func.count()).select_from(Customer)) or 0),
+                                "receivables": int(await session.scalar(select(func.count()).select_from(Receivable)) or 0),
+                                "open_amount": str(await session.scalar(select(func.coalesce(func.sum(Receivable.balance), 0)).where(Receivable.status.in_(["OPEN", "REGISTERED", "PARTIALLY_PAID", "OVERDUE"]))) or 0),
+                            }
+                    finally:
+                        reset_tenant_context(token)
+                    snapshot = await platform_session.scalar(
+                        select(TenantUsageSnapshot).where(
+                            TenantUsageSnapshot.tenant_id == tenant.id,
+                            TenantUsageSnapshot.period == period,
+                        ).order_by(TenantUsageSnapshot.captured_at.desc())
+                    )
+                    if snapshot is None:
+                        snapshot = TenantUsageSnapshot(tenant_id=tenant.id, period=period, metrics=metrics)
+                        platform_session.add(snapshot)
+                    else:
+                        snapshot.metrics = metrics
+                        snapshot.captured_at = datetime.now(UTC)
+                    captured[tenant.slug] = 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("tenant_usage_capture_failed", extra={"tenant_id": str(tenant.id), "error": str(exc)})
+                    captured[tenant.slug] = -1
+            await platform_session.commit()
+        return captured
     return run(action())

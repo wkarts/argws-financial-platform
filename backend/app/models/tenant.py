@@ -509,3 +509,263 @@ class TenantAuditLog(UUIDPrimaryKeyMixin, TenantBase):
     context: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     correlation_id: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+
+
+class TenantRole(UUIDPrimaryKeyMixin, TimestampMixin, TenantBase):
+    __tablename__ = "roles"
+
+    code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    permissions: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class TenantApiKey(UUIDPrimaryKeyMixin, TimestampMixin, TenantBase):
+    __tablename__ = "api_keys"
+
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    permissions: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    company_ids: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    allowed_ips: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class OutboundWebhook(UUIDPrimaryKeyMixin, TimestampMixin, TenantBase):
+    __tablename__ = "outbound_webhooks"
+
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    events: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    encrypted_secret: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    headers: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class WebhookDelivery(UUIDPrimaryKeyMixin, TimestampMixin, TenantBase):
+    __tablename__ = "webhook_deliveries"
+    __table_args__ = (Index("ix_webhook_delivery_status", "status", "next_attempt_at"),)
+
+    webhook_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("outbound_webhooks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    event_type: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    event_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    response_status: Mapped[int | None] = mapped_column(Integer)
+    response_body: Mapped[str | None] = mapped_column(Text)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class BankTransaction(UUIDPrimaryKeyMixin, TimestampMixin, TenantBase):
+    __tablename__ = "bank_transactions"
+    __table_args__ = (
+        UniqueConstraint("bank_account_id", "external_id", name="uq_bank_transaction_external"),
+        Index("ix_bank_transaction_date", "bank_account_id", "transaction_date"),
+    )
+
+    bank_account_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("bank_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    external_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    transaction_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    transaction_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    document_number: Mapped[str | None] = mapped_column(String(120), index=True)
+    end_to_end_id: Mapped[str | None] = mapped_column(String(100), index=True)
+    raw_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    reconciliation_status: Mapped[str] = mapped_column(String(32), nullable=False, default="UNMATCHED", index=True)
+
+
+class BankStatementImport(UUIDPrimaryKeyMixin, TimestampMixin, TenantBase):
+    __tablename__ = "bank_statement_imports"
+
+    bank_account_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("bank_accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    format: Mapped[str] = mapped_column(String(16), nullable=False)
+    object_key: Mapped[str] = mapped_column(Text, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
+    imported_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duplicate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class Negotiation(UUIDPrimaryKeyMixin, TimestampMixin, TenantBase):
+    __tablename__ = "negotiations"
+
+    company_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
+    customer_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False, index=True)
+    code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    original_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    negotiated_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    installment_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    first_due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="DRAFT", index=True)
+    terms: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    approved_by: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class NegotiationReceivable(UUIDPrimaryKeyMixin, TenantBase):
+    __tablename__ = "negotiation_receivables"
+    __table_args__ = (UniqueConstraint("negotiation_id", "receivable_id", name="uq_negotiation_receivable"),)
+
+    negotiation_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("negotiations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    receivable_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("receivables.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+
+
+class ImportJob(UUIDPrimaryKeyMixin, TimestampMixin, TenantBase):
+    __tablename__ = "import_jobs"
+
+    import_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    object_key: Mapped[str | None] = mapped_column(Text)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
+    options: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    summary: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    errors: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ExportJob(UUIDPrimaryKeyMixin, TimestampMixin, TenantBase):
+    __tablename__ = "export_jobs"
+
+    export_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
+    filters: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    format: Mapped[str] = mapped_column(String(16), nullable=False, default="XLSX")
+    object_key: Mapped[str | None] = mapped_column(Text)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    requested_by: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class PublicPaymentLink(UUIDPrimaryKeyMixin, TimestampMixin, TenantBase):
+    __tablename__ = "public_payment_links"
+
+    receivable_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("receivables.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    token_prefix: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    max_views: Mapped[int | None] = mapped_column(Integer)
+    view_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_viewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class CNABEvent(UUIDPrimaryKeyMixin, TimestampMixin, TenantBase):
+    __tablename__ = "cnab_events"
+
+    return_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("cnab_returns.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    receivable_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), index=True)
+    charge_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), index=True)
+    occurrence_code: Mapped[str] = mapped_column(String(16), nullable=False, index=True)
+    occurrence_description: Mapped[str] = mapped_column(String(255), nullable=False)
+    our_number: Mapped[str | None] = mapped_column(String(64), index=True)
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    occurrence_date: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PROCESSED")
+    raw_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class PixAutomaticMandate(UUIDPrimaryKeyMixin, TimestampMixin, TenantBase):
+    """Autorização recorrente de Pix Automático vinculada a um contrato/cliente."""
+
+    __tablename__ = "pix_automatic_mandates"
+    __table_args__ = (
+        UniqueConstraint("provider", "external_id", name="uq_pix_automatic_provider_external"),
+        Index("ix_pix_automatic_company_status", "company_id", "status"),
+    )
+
+    company_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("companies.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    customer_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("customers.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    contract_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("contracts.id", ondelete="SET NULL"), index=True
+    )
+    bank_agreement_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("bank_agreements.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    frequency: Mapped[str] = mapped_column(String(32), nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    finish_date: Mapped[date | None] = mapped_column(Date)
+    fixed_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    min_limit_value: Mapped[Decimal | None] = mapped_column(Numeric(18, 2))
+    description: Mapped[str] = mapped_column(String(120), nullable=False)
+    payment_creation_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="MANUAL")
+    retry_policy: Mapped[str] = mapped_column(String(64), nullable=False, default="NOT_ALLOWED")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="CREATED", index=True)
+    authorization_url: Mapped[str | None] = mapped_column(Text)
+    qr_copy_paste: Mapped[str | None] = mapped_column(Text)
+    qr_encoded_image: Mapped[str | None] = mapped_column(Text)
+    raw_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class PixAutomaticInstruction(UUIDPrimaryKeyMixin, TimestampMixin, TenantBase):
+    """Instrução periódica criada sob uma autorização de Pix Automático."""
+
+    __tablename__ = "pix_automatic_instructions"
+    __table_args__ = (
+        UniqueConstraint("provider", "external_id", name="uq_pix_automatic_instruction_external"),
+        Index("ix_pix_automatic_instruction_due", "mandate_id", "due_date"),
+    )
+
+    mandate_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("pix_automatic_mandates.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    receivable_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("receivables.id", ondelete="SET NULL"), index=True
+    )
+    charge_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("charges.id", ondelete="SET NULL"), index=True
+    )
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    due_date: Mapped[date] = mapped_column(Date, nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="CREATED", index=True)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    raw_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    last_error: Mapped[str | None] = mapped_column(Text)

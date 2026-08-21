@@ -1,75 +1,102 @@
-# Checklist de Aceite
+# Checklist de Aceite — v1.0.0-rc.2
 
-## Plataforma
+## Control Plane e multitenancy
 
-- [x] Control Plane separado por host e autenticação.
-- [x] Tenant Plane resolvido por hostname.
-- [x] Banco PostgreSQL por tenant.
-- [x] Bucket MinIO/S3 por tenant.
+- [x] Control Plane separado por host, autenticação e autorização.
+- [x] Tenant Plane resolvido por hostname sem fallback.
+- [x] Banco PostgreSQL e usuário exclusivos por tenant.
+- [x] Storage segregado por tenant.
 - [x] Empresas múltiplas por tenant.
-- [x] Usuários restritos por empresa.
-- [x] Refresh token rotativo e logout com revogação.
-- [x] Domínio provisionado.
-- [x] Domínio personalizado e Domain Agent.
-- [x] Cloudflare provider.
+- [x] Usuários e permissões por empresa.
+- [x] Domínio provisionado e domínios personalizados.
+- [x] Cloudflare Provider e estados DNS/SSL.
+- [x] Planos, feature flags, limites e enforcement no backend.
+- [x] Usuários e papéis da plataforma.
+- [x] API keys da plataforma.
+- [x] Suporte temporário auditado.
+- [x] Auditoria e consumo global.
+- [x] Provisionamento, suspensão, reativação, cancelamento e arquivamento.
 
-## Financeiro
+## Financeiro do tenant
 
-- [x] Clientes, serviços e contratos.
+- [x] Clientes e múltiplos contatos.
+- [x] Serviços.
+- [x] Contratos.
 - [x] Recorrência idempotente.
 - [x] Contas a receber.
-- [x] Cobrança Sandbox.
-- [x] PIX/boleto Sandbox.
-- [x] Pagamento manual e webhook.
+- [x] Cobranças.
+- [x] Pagamentos total/parcial.
+- [x] Estorno.
 - [x] Conciliação.
-- [x] Recibo PDF.
-- [x] NFS-e Sandbox XML/PDF.
+- [x] Importação OFX/CSV.
+- [x] Negociações/acordos.
+- [x] Links públicos de pagamento.
+- [x] Recibos PDF.
 - [x] Documentos imutáveis.
-- [x] Auditoria.
+- [x] Importações e exportações.
+- [x] Relatórios e dashboards.
 
-## CNAB e bancos
+## Bancos, Pix e CNAB
 
-- [x] Core CNAB 240 com 240 posições.
-- [x] Remessa.
-- [x] Parser de retorno T/U.
-- [x] Idempotência de importação.
-- [ ] Homologação em banco real — depende da instituição/convênio/credenciais.
-- [ ] Layout CNAB 400 específico — depende do banco/carteira.
+- [x] Provider bancário Sandbox.
+- [x] Adapter Asaas configurável.
+- [x] Boleto/Pix/boleto híbrido em Sandbox.
+- [x] Pix Automático com mandato e instrução.
+- [x] CNAB 240 extensível.
+- [x] CNAB 400 extensível.
+- [x] Remessas, retornos e eventos.
+- [x] Idempotência.
+- [ ] Homologação de uma carteira/convênio real — depende da instituição e credenciais.
+- [ ] Homologação Pix Automático real — depende do PSP e contrato.
 
-## Comunicações
+## Fiscal e comunicação
 
-- [x] SMTP.
-- [x] Evolution API.
-- [x] Configuração por plataforma/tenant/empresa.
-- [x] Teste de integração.
+- [x] NFS-e Sandbox XML/PDF.
+- [x] SMTP por plataforma/tenant/empresa.
+- [x] Evolution API por plataforma/tenant/empresa.
+- [x] Webhook Evolution idempotente.
+- [x] Régua de cobrança.
+- [x] Templates.
 - [x] Outbox/RabbitMQ/Celery.
-- [x] Logs de envio/status.
-- [x] Régua automática D-7/D-1/D0/D+1/D+5.
-- [x] Templates editáveis e validados por canal.
-- [x] Destinatários múltiplos e idempotência concorrente.
+- [x] API keys do tenant.
+- [x] Webhooks de saída assinados e com retry.
+- [ ] NFS-e real — depende do provedor, certificado e credenciais.
+- [ ] Teste real SMTP/Evolution — depende das credenciais do ambiente.
 
-## Backup e operação
+## Deploy e infraestrutura
 
-- [x] Backup do Control Plane.
-- [x] Backup de todos os bancos dos tenants.
-- [x] Backup de objetos.
-- [x] Manifest e checksums.
-- [x] S3/MinIO.
+- [x] Compose de build pelo fonte.
+- [x] Compose de produção por imagens.
+- [x] Docker genérico.
+- [x] Dockge com ambiente, compose, install, update, rollback e health check.
+- [x] CloudPanel com ambiente, compose, install, update, rollback, health check e vhosts.
+- [x] Portainer com stack por imagens, stack Git/source, deploy API e webhook.
+- [x] Migrations do Control Plane.
+- [x] Migrations de todos os tenants existentes.
+- [x] Bootstrap idempotente.
+- [x] Health, live, ready e metrics.
+- [x] Prometheus/Grafana opcionais.
+- [x] `.env.example` completo e exemplos por ambiente.
+- [x] GitHub Actions para CI, imagens e release.
+- [x] Contrato frontend/backend sem chamadas órfãs.
+- [x] Alembic com heads únicos e caminhos portáveis.
+- [x] Empacotamento limpo com manifest e checksums.
+- [ ] Smoke test Docker neste ambiente de empacotamento — requer daemon Docker.
+- [ ] Build npm integral neste ambiente de empacotamento — requer acesso ao registry npm.
+
+## Backup e segurança
+
+- [x] Backup Control Plane.
+- [x] Backup dos bancos dos tenants.
+- [x] Backup MinIO/S3.
 - [x] Google Drive via rclone.
 - [x] Dropbox via rclone.
+- [x] Manifest, checksums e criptografia opcional.
 - [x] Restore completo.
-- [x] Modo manutenção.
-- [x] Retenção.
-
-## Qualidade
-
-- [x] Testes backend.
-- [x] Testes de isolamento por empresa.
-- [x] Testes de segurança e idempotência.
-- [x] Testes de providers Sandbox.
-- [x] Validador estrutural.
-- [x] CI GitHub Actions.
-- [x] Docker Compose.
-- [x] CloudPanel/Dockge.
-- [ ] Build Docker executado no ambiente de destino — requer daemon Docker.
-- [ ] Homologação externa de SMTP/Evolution/banco/NFS-e — requer credenciais reais.
+- [x] Exportação/restore de tenant no Control Plane.
+- [x] Segredos fora do código.
+- [x] Auditoria append-only.
+- [x] API keys por hash.
+- [x] Webhooks assinados.
+- [x] Rate limit e locks distribuídos.
+- [ ] Restore real em produção — deve ser validado no ambiente de destino antes do go-live.

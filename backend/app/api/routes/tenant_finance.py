@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -19,6 +19,7 @@ from app.api.deps import (
     ensure_company_access,
     get_tenant_context_dep,
     get_tenant_db,
+    get_tenant_entitlements,
     require_permission,
 )
 from app.core.errors import APIError
@@ -27,6 +28,7 @@ from app.models.tenant import (
     BankAccount,
     BankAgreement,
     Charge,
+    CNABEvent,
     CNABRemittance,
     CNABReturn,
     Company,
@@ -36,7 +38,15 @@ from app.models.tenant import (
     Payment,
     Receivable,
 )
-from app.providers.cnab import CNAB240Generator, CNAB240ReturnParser, CNABCompany, CNABTitle
+from app.providers.cnab import (
+    CNAB240Generator,
+    CNAB240ReturnParser,
+    CNAB400Generator,
+    CNAB400Layout,
+    CNAB400ReturnParser,
+    CNABCompany,
+    CNABTitle,
+)
 from app.providers.storage import S3StorageProvider
 from app.schemas.auth import AuthUser
 from app.schemas.common import PaginatedResponse, PaginationMeta, SuccessResponse
@@ -51,6 +61,7 @@ from app.schemas.tenant import (
 )
 from app.services.audit import tenant_audit
 from app.services.billing import BillingService
+from app.services.entitlements import TenantEntitlements
 from app.services.recurrence import RecurrenceService
 
 router = APIRouter(prefix="/api/v1", tags=["Tenant - Financeiro"])
@@ -240,11 +251,19 @@ async def create_charge(
     payload: ChargeCreate,
     user: AuthUser = Depends(require_permission("charges.create")),
     session: AsyncSession = Depends(get_tenant_db),
+    entitlements: TenantEntitlements = Depends(get_tenant_entitlements),
 ) -> SuccessResponse[ChargeRead]:
     receivable = await session.get(Receivable, payload.receivable_id)
     if receivable is None:
         raise APIError("RECEIVABLE_NOT_FOUND", "Conta a receber não encontrada.", 404)
     ensure_company_access(user, receivable.company_id)
+    charge_type = payload.charge_type.upper()
+    entitlements.require_feature("pix" if "PIX" in charge_type else "boleto")
+    month_start = datetime.now(UTC).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_count = await session.scalar(
+        select(func.count()).select_from(Charge).where(Charge.created_at >= month_start)
+    ) or 0
+    entitlements.enforce_limit("monthly_charges", int(month_count))
     charge = await BillingService(session).create_charge(
         receivable_id=str(payload.receivable_id),
         provider_name=payload.provider,
@@ -378,7 +397,9 @@ async def generate_cnab_remittance(
     context: TenantContext = Depends(get_tenant_context_dep),
     user: AuthUser = Depends(require_permission("cnab.generate")),
     session: AsyncSession = Depends(get_tenant_db),
+    entitlements: TenantEntitlements = Depends(get_tenant_entitlements),
 ) -> SuccessResponse[dict]:
+    entitlements.require_feature("cnab")
     agreement = await session.get(BankAgreement, payload.bank_agreement_id)
     if agreement is None or not agreement.is_active:
         raise APIError("BANK_AGREEMENT_NOT_FOUND", "Convênio bancário não encontrado.", 404)
@@ -427,29 +448,39 @@ async def generate_cnab_remittance(
         select(func.max(CNABRemittance.sequence)).where(CNABRemittance.bank_agreement_id == agreement.id)
     ) or 0
     sequence = int(last_sequence) + 1
-    generator = CNAB240Generator(
-        CNABCompany(
-            bank_code=account.bank_code,
-            tax_id=company.tax_id,
-            name=company.legal_name,
-            agreement=agreement.agreement_number or "",
-            branch=account.branch,
-            branch_digit=account.branch_digit or "",
-            account=account.account,
-            account_digit=account.account_digit or "",
-        ),
-        sequence=sequence,
-        generation_date=datetime.now(UTC).date(),
+    cnab_company = CNABCompany(
+        bank_code=account.bank_code,
+        tax_id=company.tax_id,
+        name=company.legal_name,
+        agreement=agreement.agreement_number or "",
+        branch=account.branch,
+        branch_digit=account.branch_digit or "",
+        account=account.account,
+        account_digit=account.account_digit or "",
     )
+    layout = str(agreement.cnab_layout or "240").strip()
+    if layout == "400":
+        generator = CNAB400Generator(
+            cnab_company,
+            sequence=sequence,
+            generation_date=datetime.now(UTC).date(),
+            layout=CNAB400Layout(wallet=agreement.wallet or ""),
+        )
+    elif layout == "240":
+        generator = CNAB240Generator(
+            cnab_company, sequence=sequence, generation_date=datetime.now(UTC).date()
+        )
+    else:
+        raise APIError("CNAB_LAYOUT_UNSUPPORTED", "Layout CNAB não suportado.", 422, {"layout": layout})
     content = generator.generate(titles)
     digest = hashlib.sha256(content).hexdigest()
-    key = f"cnab/remittances/{datetime.now(UTC):%Y/%m}/REM-{account.bank_code}-{sequence:06d}.REM"
+    key = f"cnab/remittances/{datetime.now(UTC):%Y/%m}/REM-{account.bank_code}-{sequence:06d}-CNAB{layout}.REM"
     await storage.put_bytes(context.storage_bucket, key, content, "text/plain")
     remittance = CNABRemittance(
         company_id=company.id,
         bank_agreement_id=agreement.id,
         sequence=sequence,
-        layout="240",
+        layout=layout,
         status="GENERATED",
         object_key=key,
         sha256=digest,
@@ -478,7 +509,9 @@ async def import_cnab_return(
     context: TenantContext = Depends(get_tenant_context_dep),
     user: AuthUser = Depends(require_permission("cnab.import")),
     session: AsyncSession = Depends(get_tenant_db),
+    entitlements: TenantEntitlements = Depends(get_tenant_entitlements),
 ) -> SuccessResponse[dict]:
+    entitlements.require_feature("cnab")
     ensure_company_access(user, company_id)
     if await session.get(Company, company_id) is None:
         raise APIError("COMPANY_NOT_FOUND", "Empresa não encontrada.", 404)
@@ -489,33 +522,222 @@ async def import_cnab_return(
     existing = await session.scalar(select(CNABReturn).where(CNABReturn.sha256 == digest))
     if existing:
         return SuccessResponse(data={"id": str(existing.id), "status": existing.status, "idempotent": True})
+    first_line = next((line for line in content.decode("latin-1", errors="ignore").splitlines() if line.strip()), "")
     try:
-        events = CNAB240ReturnParser().parse(content)
+        if len(first_line) == 240:
+            layout = "240"
+            events = CNAB240ReturnParser().parse(content)
+        elif len(first_line) == 400:
+            layout = "400"
+            events = CNAB400ReturnParser().parse(content)
+        else:
+            raise ValueError("Não foi possível identificar o layout CNAB 240/400 pelo tamanho do registro.")
     except ValueError as exc:
         raise APIError("INVALID_CNAB_RETURN", str(exc), 422) from exc
-    bank_code = content[:3].decode("ascii", errors="ignore")
+    bank_code = (
+        first_line[:3] if layout == "240" else first_line[76:79]
+    ).strip()
     filename = file.filename or f"return-{uuid4().hex}.RET"
     key = f"cnab/returns/{company_id}/{datetime.now(UTC):%Y/%m}/{digest[:12]}-{filename}"
     await storage.put_bytes(context.storage_bucket, key, content, "text/plain")
+    def json_value(value: object) -> object:
+        if isinstance(value, (date, datetime)):
+            return value.isoformat()
+        if isinstance(value, Decimal):
+            return str(value)
+        if isinstance(value, dict):
+            return {str(key): json_value(item) for key, item in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [json_value(item) for item in value]
+        return value
+
+    def json_safe(event: dict[str, object]) -> dict[str, object]:
+        return {event_key: json_value(value) for event_key, value in event.items()}
+
     item = CNABReturn(
         company_id=company_id,
         bank_code=bank_code,
-        layout="240",
+        layout=layout,
         filename=filename,
         object_key=key,
         sha256=digest,
-        status="PROCESSED",
+        status="PROCESSING",
         event_count=len(events),
-        raw_summary={"events": events[:500]},
-        processed_at=datetime.now(UTC),
+        raw_summary={"events": [json_safe(event) for event in events[:500]]},
     )
     session.add(item)
+    await session.flush()
+
+    matched = 0
+    unmatched = 0
+    liquidated = 0
+    registered = 0
+    rejected = 0
+    cancelled = 0
+    protested = 0
+    billing = BillingService(session)
+    for event in events:
+        our_number = str(event.get("our_number") or "").strip()
+        normalized_our_number = str(event.get("our_number_normalized") or our_number).strip()
+        document_number = str(event.get("document_number") or "").strip()
+        normalized_document_number = str(
+            event.get("document_number_normalized") or document_number
+        ).strip()
+        charge = None
+        receivable = None
+
+        # O mesmo nosso número pode existir em convênios distintos. Sempre
+        # limite a busca à empresa informada na importação para impedir
+        # associação cruzada dentro do tenant.
+        if our_number or normalized_our_number:
+            charge = await session.scalar(
+                select(Charge)
+                .join(Receivable, Receivable.id == Charge.receivable_id)
+                .where(
+                    Receivable.company_id == company_id,
+                    or_(
+                        Charge.our_number == our_number,
+                        func.ltrim(Charge.our_number, "0") == normalized_our_number,
+                    ),
+                )
+                .order_by(Charge.created_at.desc())
+            )
+        if charge is not None:
+            receivable = await session.get(Receivable, charge.receivable_id)
+
+        if receivable is None and (document_number or normalized_document_number):
+            receivable = await session.scalar(
+                select(Receivable).where(
+                    Receivable.company_id == company_id,
+                    or_(
+                        Receivable.document_number == document_number,
+                        func.ltrim(Receivable.document_number, "0")
+                        == normalized_document_number,
+                    ),
+                )
+            )
+            if receivable is not None and charge is None:
+                charge = await session.scalar(
+                    select(Charge)
+                    .where(Charge.receivable_id == receivable.id)
+                    .order_by(Charge.created_at.desc())
+                )
+
+        occurrence_code = str(event.get("occurrence_code") or "")
+        event_status = "MATCHED" if receivable is not None else "UNMATCHED"
+        if receivable is not None:
+            matched += 1
+        else:
+            unmatched += 1
+
+        cnab_event = CNABEvent(
+            return_id=item.id,
+            receivable_id=receivable.id if receivable else None,
+            charge_id=charge.id if charge else None,
+            occurrence_code=occurrence_code,
+            occurrence_description=str(
+                event.get("occurrence_description") or f"Ocorrência {occurrence_code}"
+            ),
+            our_number=our_number or None,
+            amount=(
+                event.get("amount")
+                if isinstance(event.get("amount"), Decimal)
+                else None
+            ),
+            occurrence_date=(
+                event.get("occurrence_date")
+                if isinstance(event.get("occurrence_date"), date)
+                else None
+            ),
+            status=event_status,
+            raw_data=json_safe(event),
+        )
+        session.add(cnab_event)
+
+        if charge is not None:
+            if occurrence_code == "02":
+                charge.status = "REGISTERED"
+                if receivable is not None and receivable.status == "OPEN":
+                    receivable.status = "REGISTERED"
+                registered += 1
+                cnab_event.status = "APPLIED"
+            elif occurrence_code == "03":
+                charge.status = "FAILED"
+                if receivable is not None and receivable.status == "REGISTERED":
+                    receivable.status = "OPEN"
+                rejected += 1
+                cnab_event.status = "APPLIED"
+            elif occurrence_code in {"09", "10"}:
+                charge.status = "CANCELLED"
+                if receivable is not None and receivable.status == "REGISTERED":
+                    receivable.status = "OPEN"
+                cancelled += 1
+                cnab_event.status = "APPLIED"
+
+        if receivable is not None and occurrence_code in {"19", "23"}:
+            receivable.status = "PROTESTED"
+            protested += 1
+            cnab_event.status = "APPLIED"
+
+        if receivable is not None and occurrence_code in {"06", "15", "17"}:
+            paid_amount = event.get("amount")
+            if not isinstance(paid_amount, Decimal) or paid_amount <= 0:
+                paid_amount = event.get("title_amount")
+            if isinstance(paid_amount, Decimal) and paid_amount > 0:
+                paid_at_date = event.get("occurrence_date")
+                paid_at = (
+                    datetime.combine(paid_at_date, datetime.min.time(), tzinfo=UTC)
+                    if isinstance(paid_at_date, date)
+                    else datetime.now(UTC)
+                )
+                payment = await billing.register_payment(
+                    receivable_id=str(receivable.id),
+                    charge_id=str(charge.id) if charge else None,
+                    provider=f"CNAB{bank_code}",
+                    external_id=(
+                        f"CNAB-{digest[:20]}-{layout}-{event.get('sequence')}"
+                    ),
+                    amount=paid_amount,
+                    paid_at=paid_at,
+                    payment_method="CNAB",
+                    raw_payload=json_safe(event),
+                    commit=False,
+                )
+                if charge is not None:
+                    charge.status = "PAID"
+                cnab_event.status = "APPLIED"
+                cnab_event.amount = paid_amount
+                cnab_event.raw_data = {
+                    **json_safe(event),
+                    "payment_id": str(payment.id),
+                }
+                liquidated += 1
+
+    item.status = "PROCESSED" if unmatched == 0 else "PROCESSED_WITH_WARNINGS"
+    item.processed_at = datetime.now(UTC)
+    item.raw_summary = {
+        "events": [json_safe(event) for event in events[:500]],
+        "matched": matched,
+        "unmatched": unmatched,
+        "liquidated": liquidated,
+        "registered": registered,
+        "rejected": rejected,
+        "cancelled": cancelled,
+        "protested": protested,
+    }
     await session.commit()
     return SuccessResponse(
         data={
             "id": str(item.id),
             "status": item.status,
             "events": len(events),
+            "matched": matched,
+            "unmatched": unmatched,
+            "liquidated": liquidated,
+            "registered": registered,
+            "rejected": rejected,
+            "cancelled": cancelled,
+            "protested": protested,
             "sha256": digest,
             "object_key": key,
         }

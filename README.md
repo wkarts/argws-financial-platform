@@ -1,65 +1,212 @@
 # ARGWS Financial Platform
 
-Plataforma SaaS financeira multitenant para cobrança e gestão de recebíveis, construída com **Python 3.13, FastAPI, PostgreSQL, Redis, RabbitMQ/Celery, Vue 3, Tailwind CSS, PWA, MinIO/S3 e Docker Compose**.
+**ARGWS Financial Platform** é uma plataforma SaaS financeira multitenant, web/PWA e Docker-first para gestão de cobranças e recebíveis. O projeto foi construído com **Python 3.13, FastAPI, SQLAlchemy 2, PostgreSQL, Redis, RabbitMQ/Celery, Vue 3, TypeScript, Tailwind CSS e MinIO/S3**.
 
-O produto possui dois planos lógicos independentes:
-
-- **Control Plane:** governa tenants, provisionamento, domínios, bancos isolados, storage, planos, saúde e backups.
-- **Tenant Plane:** opera empresas, usuários, clientes, contratos, recorrências, recebíveis, cobranças, pagamentos, CNAB, conciliação, SMTP, Evolution API, recibos, documentos fiscais e auditoria.
-
-Cada tenant recebe um **banco PostgreSQL próprio**, um bucket MinIO/S3 próprio e pelo menos um domínio provisionado no formato:
+A versão atual é:
 
 ```text
-<slug>.financeiro.exemplo.com.br
+1.0.0-rc.2
 ```
 
-Cada tenant pode controlar várias empresas/CNPJs e limitar usuários por empresa.
+## Índice operacional da entrega
 
-## Recursos implementados
+Consulte `DELIVERY_INDEX.md` para localizar rapidamente o Control Plane, Tenant Plane, stacks Docker/Dockge/CloudPanel/Portainer, documentação, PR e comandos de instalação. O relatório técnico consolidado está em `docs/release/DELIVERY_REPORT.md`.
 
-- Control Plane com autenticação separada;
-- provisionamento idempotente de tenant;
-- banco PostgreSQL e usuário exclusivos por tenant;
-- domínio provisionado e domínios personalizados;
-- resolução de tenant por hostname, sem fallback entre tenants;
-- cache seguro de resolução no Redis;
-- empresas, clientes, serviços e contratos;
-- recorrência e geração idempotente de recebíveis;
-- cobrança por provider bancário;
-- provider bancário Sandbox totalmente funcional;
-- geração de boleto/PIX Sandbox com documento PDF;
-- pagamentos manuais e via webhook;
-- CNAB 240 extensível, remessa e parser de retorno;
-- contas bancárias e convênios;
-- conciliação manual e automática;
-- SMTP e Evolution API por plataforma, tenant ou empresa;
-- régua automática D-7/D-1/D0/D+1/D+5, templates editáveis e contatos financeiros múltiplos;
-- Outbox transacional, Celery, RabbitMQ, retry e filas separadas;
+## Arquitetura do produto
+
+A aplicação possui dois planos lógicos e de segurança independentes:
+
+```text
+Control Plane
+├── tenants
+├── planos, capacidades e limites
+├── usuários da plataforma
+├── domínios, DNS e SSL
+├── provisionamento
+├── configurações e integrações globais
+├── consumo e saúde operacional
+├── suporte temporário auditado
+├── backups, restore e exportação
+└── auditoria global
+
+Tenant Plane
+├── múltiplas empresas/CNPJs
+├── usuários, papéis e restrições por empresa
+├── clientes e contatos
+├── serviços e contratos
+├── recorrência e recebíveis
+├── cobrança, boleto, Pix e Pix Automático
+├── CNAB, pagamentos e conciliação
+├── negociações e links públicos
+├── SMTP, Evolution API e régua de cobrança
+├── documentos, recibos e fiscal
+├── API keys e webhooks
+└── relatórios, importações, exportações e auditoria
+```
+
+Cada tenant recebe:
+
+- banco PostgreSQL próprio;
+- usuário PostgreSQL próprio;
+- storage segregado;
+- domínio provisionado `<slug>.<TENANT_DOMAIN_ROOT>`;
+- um ou mais domínios personalizados;
+- configuração, branding e integrações próprios;
+- múltiplas empresas emissoras de cobrança.
+
+O hostname é a autoridade para resolução do tenant. Hosts desconhecidos não recebem fallback para outro tenant.
+
+## Tecnologias
+
+### Backend
+
+- Python 3.13;
+- FastAPI;
+- SQLAlchemy 2 assíncrono;
+- Alembic separado para Control Plane e Tenant Plane;
+- Pydantic 2;
+- PostgreSQL 17;
+- Redis;
+- RabbitMQ;
+- Celery workers e Celery Beat;
+- MinIO/S3;
+- Outbox transacional;
+- JWT, refresh rotativo, RBAC, API keys e webhooks assinados.
+
+### Frontend
+
+- Vue 3;
+- TypeScript;
+- Vite;
+- Pinia;
+- Vue Router;
+- Tailwind CSS;
+- PWA responsiva;
+- portal público de pagamento por token.
+
+### Operação
+
+- Docker Compose com build pelo fonte;
+- Docker Compose de produção por imagens;
+- Dockge;
+- CloudPanel;
+- Portainer;
+- Cloudflare/ACME DNS-01 opcional;
+- Prometheus e Grafana opcionais;
+- GitHub Actions para CI, imagens e release.
+
+## Recursos financeiros
+
+- empresas múltiplas por tenant;
+- clientes e contatos financeiros múltiplos;
+- serviços e contratos;
+- recorrência mensal, semanal, quinzenal, bimestral, trimestral, semestral, anual e personalizada;
+- contas a receber;
+- cobrança, pagamento parcial, baixa e estorno;
+- boleto, Pix, boleto híbrido e provider Sandbox;
+- adapter Asaas preparado para credenciais reais;
+- Pix Automático com mandatos e instruções;
+- CNAB 240 e CNAB 400 extensíveis;
+- remessas, retornos e eventos;
+- importação OFX/CSV;
+- conciliação;
+- negociações e acordos;
+- links públicos de pagamento;
 - recibos em PDF;
-- provider NFS-e Sandbox com XML e PDF;
-- documentos imutáveis no MinIO/S3 com SHA-256;
-- importador do padrão `FINANCEIRO Vitor.zip` com prévia e deduplicação;
-- usuários, RBAC, papéis prontos e restrição por empresa;
-- auditoria operacional e financeira;
-- backup de Control Plane, todos os bancos dos tenants e MinIO/S3;
-- upload de backup para S3, Google Drive e Dropbox via rclone;
-- restauração completa com checksum e modo de manutenção;
-- frontend responsivo/PWA para Control Plane e Tenant Plane;
-- Docker Compose, CloudPanel, Dockge, CI e release automation.
+- NFS-e Sandbox em XML/PDF;
+- documentos financeiros imutáveis com SHA-256;
+- importação do financeiro legado;
+- relatórios e exportações.
 
-## Limites de homologação externa
+## Comunicações
 
-O núcleo é operacional e contém providers Sandbox para executar o fluxo completo sem banco ou prefeitura. Integrações bancárias reais, layouts CNAB específicos e NFS-e municipal exigem credenciais, contratos e homologação de cada instituição. Esses pontos foram isolados por interfaces para não alterar o domínio financeiro.
+- SMTP em nível de plataforma, tenant ou empresa;
+- Evolution API em nível de plataforma, tenant ou empresa;
+- envio de texto, links e documentos;
+- webhook idempotente da Evolution API;
+- régua automática de cobrança;
+- templates por canal;
+- Outbox, RabbitMQ, retry e histórico de entrega;
+- webhooks de saída assinados por tenant.
 
-O CNAB 240 fornecido garante estrutura de registros com 240 posições e extensão por banco; ele **não deve ser enviado em produção antes da homologação do banco e da carteira contratada**. A infraestrutura para CNAB 400 está prevista no boundary de providers, mas cada layout precisa ser implementado conforme o banco escolhido.
+## Deploys incluídos
 
-## Início rápido local
+```text
+deployments/
+├── development/
+├── staging/
+├── production/
+├── docker/
+├── dockge/
+├── cloudpanel/
+├── portainer/
+└── common/
+```
+
+Cada pacote operacional possui ambiente de exemplo, Compose/stack, instalação, atualização, rollback ou procedimento equivalente, health check e documentação.
+
+### Docker genérico
+
+```bash
+./deployments/docker/install.sh \
+  --domain financeiro.exemplo.com.br \
+  --admin-email admin@exemplo.com.br \
+  --mode source
+```
+
+Modo baseado em imagens:
+
+```bash
+./deployments/docker/install.sh \
+  --domain financeiro.exemplo.com.br \
+  --admin-email admin@exemplo.com.br \
+  --mode images
+```
+
+### Dockge
+
+```bash
+sudo ./deployments/dockge/install.sh \
+  --domain financeiro.exemplo.com.br \
+  --admin-email admin@exemplo.com.br \
+  --stacks-dir /opt/stacks
+```
+
+### CloudPanel
+
+```bash
+sudo ./deployments/cloudpanel/install.sh \
+  --domain financeiro.exemplo.com.br \
+  --admin-email admin@exemplo.com.br \
+  --stack-dir /home/financial/htdocs/financeiro.exemplo.com.br/argws-financial-platform
+```
+
+### Portainer
+
+```bash
+./deployments/portainer/deploy.sh \
+  --domain financeiro.exemplo.com.br \
+  --admin-email admin@exemplo.com.br \
+  --url https://portainer.exemplo.com.br \
+  --api-key ptr_xxxxxxxxx \
+  --endpoint-id 1
+```
+
+Documentação:
+
+- `docs/operations/DEPLOY_DOCKGE.md`;
+- `docs/operations/DEPLOY_CLOUDPANEL.md`;
+- `docs/operations/DEPLOY_PORTAINER.md`;
+- `docs/operations/BACKUP_RESTORE.md`;
+- `docs/operations/DOMAINS_SSL.md`.
+
+## Instalação local
 
 Pré-requisitos:
 
 - Docker Engine;
 - Docker Compose v2;
-- Python 3 apenas para geração inicial dos segredos.
+- Python 3 para gerar os segredos.
 
 ```bash
 cp .env.example .env
@@ -67,167 +214,133 @@ python3 scripts/generate_secrets.py --env .env
 ./scripts/install_local.sh
 ```
 
-A instalação local configura:
+URLs padrão:
 
 ```text
 Control Plane: http://control.localhost:8800
 Tenant demo:   http://demo.localhost:8800
+API:           http://api.localhost:8800
 ```
 
-As credenciais geradas ficam em:
+As credenciais iniciais ficam em `.bootstrap-credentials.txt`. Esse arquivo e o `.env` não devem ser versionados.
+
+## Serviços do Compose fonte
 
 ```text
-.bootstrap-credentials.txt
-```
-
-Esse arquivo contém segredos e não deve ser versionado.
-
-## Deploy CloudPanel + Dockge
-
-Exemplo para o domínio-base `financeiro.exemplo.com.br`:
-
-```bash
-./scripts/deploy_cloudpanel_dockge.sh \
-  --domain financeiro.exemplo.com.br \
-  --cloudflare-zone exemplo.com.br \
-  --admin-email admin@exemplo.com.br \
-  --stack-dir /home/usuario/htdocs/financeiro.exemplo.com.br/dockge-stacks/argws-financial-platform
-```
-
-O instalador:
-
-1. copia a stack para o diretório do Dockge;
-2. gera `.env` e segredos fortes;
-3. configura domínios;
-4. valida o projeto e o Compose;
-5. constrói as imagens;
-6. aplica migrations do Control Plane;
-7. cria o administrador inicial;
-8. sobe todos os serviços;
-9. aguarda `/health/ready`;
-10. mostra URLs e credenciais.
-
-Documentação completa: `docs/operations/DEPLOY_CLOUDPANEL_DOCKGE.md`.
-
-## DNS esperado
-
-```text
-financeiro.exemplo.com.br             -> servidor/CloudPanel
-control.financeiro.exemplo.com.br     -> servidor/CloudPanel
-api.financeiro.exemplo.com.br         -> saúde, OpenAPI e informações públicas da API
-*.financeiro.exemplo.com.br           -> servidor/CloudPanel
-```
-
-As operações financeiras, integrações e webhooks usam sempre o domínio provisionado/customizado do tenant. O hostname seleciona o banco PostgreSQL exclusivo; o host central `api.*` não é um atalho para atravessar esse isolamento.
-
-Domínios personalizados, como `cobranca.cliente.com.br`, são reconciliados pelo Domain Agent documentado em `docs/operations/DOMAINS_SSL.md`.
-
-## Serviços Docker
-
-```text
+financial-storage-init
 financial-postgres
 financial-redis
 financial-rabbitmq
 financial-minio
 financial-minio-init
 financial-migrate
-financial-init
+financial-migrate-tenants
+financial-bootstrap
 financial-api
-financial-worker
+financial-worker-default
+financial-worker-billing
+financial-worker-notifications
+financial-worker-backups
 financial-beat
 financial-web
 financial-gateway
 ```
 
-Serviços de teste no profile `tools`:
+Profiles opcionais:
 
 ```text
-financial-api-test
-financial-web-test
+cloudpanel  -> financial-acme, financial-cloudpanel-agent
+monitoring  -> financial-prometheus, financial-grafana
+tools       -> financial-api-test, financial-web-test
 ```
 
-## Comandos operacionais
+## Comandos de desenvolvimento e validação
 
 ```bash
-# Validar estrutura
+make validate
+make test
+make compose-config
+make up
+make health
+make backup
+make package
+```
+
+Ou diretamente:
+
+```bash
 python3 scripts/validate_project.py
+cd backend && PYTHONPATH=. pytest -q
+node scripts/validate_frontend_syntax.mjs
+bash -n deployments/dockge/install.sh
+```
 
-# Validar Compose
-docker compose config --quiet
+## Empacotamento da release
 
-# Subir/reconstruir
-docker compose up -d --build
+```bash
+make package
+```
 
-# Estado
-docker compose ps
+O comando gera ZIP, TAR.ZST, checksums SHA-256 e relatório JSON em `release-artifacts/`, excluindo segredos, caches, `.git` e dados de runtime.
 
-# Logs
-docker compose logs -f --tail=200 financial-api financial-worker financial-beat
+## Backup e restore
 
-# Testes em containers
-docker compose --profile tools run --rm financial-api-test
-docker compose --profile tools run --rm financial-web-test
+Backup manual:
 
-# Backup imediato
+```bash
 ./scripts/backup.sh
+```
 
-# Restore completo
+Restore completo:
+
+```bash
 ./scripts/restore.sh /caminho/argws-financial-backup-AAAAmmddTHHMMSS.tar.zst
 ```
 
-## URLs de observabilidade
+Destinos suportados:
 
-```text
-/health
-/health/live
-/health/ready
-/metrics
-/api/docs
-/api/redoc
-```
+- local;
+- MinIO/S3;
+- Google Drive via rclone;
+- Dropbox via rclone.
 
-## Estrutura
+Os pacotes incluem manifest, checksums e criptografia opcional com `age`. O backup deve ser testado na infraestrutura de destino antes da entrada em produção.
 
-```text
-backend/
-  app/
-    api/
-    core/
-    db/
-    models/
-    providers/
-    services/
-    workers/
-  migrations/
-  tests/
-frontend/
-  src/
-infrastructure/
-deployments/
-scripts/
-docs/
-compose.yaml
-```
+## Segurança e isolamento
 
-## Documentos principais
+- banco e credenciais exclusivos por tenant;
+- resolução por hostname sem fallback;
+- tokens confrontados com o contexto do domínio;
+- segredos criptografados/referenciados;
+- permissões por papel e empresa;
+- API keys armazenadas por hash;
+- webhooks assinados;
+- auditoria append-only;
+- logs sem credenciais;
+- rate limit e locks distribuídos;
+- documentos com hash e sem sobrescrita silenciosa.
 
-- `docs/architecture/ARCHITECTURE.md`
-- `docs/architecture/FLOWS.md`
-- `docs/security/TENANT_ISOLATION.md`
-- `docs/operations/DEPLOY_CLOUDPANEL_DOCKGE.md`
-- `docs/operations/DOMAINS_SSL.md`
-- `docs/operations/BACKUP_RESTORE.md`
-- `docs/integrations/SMTP_EVOLUTION.md`
-- `docs/financial/COLLECTION_RULES.md`
-- `docs/integrations/BANKING_CNAB.md`
-- `docs/LEGACY_IMPORT.md`
-- `docs/API.md`
-- `docs/ACCEPTANCE_CHECKLIST.md`
+## Homologações externas
 
-## Versão
+O pacote contém providers Sandbox para executar o ciclo de ponta a ponta e um adapter Asaas pronto para configuração. Credenciais bancárias, carteira/convênio, Pix, layouts CNAB específicos, certificado digital, prefeitura/NFS-e, SMTP, Evolution API, Cloudflare, Drive e Dropbox são dependências externas.
 
-```text
-0.1.0-alpha.1
-```
+Nenhum código-fonte consegue substituir contrato ou homologação do banco/PSP/prefeitura. A release candidate é completa como plataforma e distribuição, mas a ativação jurídica/financeira real depende dessas credenciais e homologações.
 
-A versão Alpha entrega a plataforma executável e o fluxo completo em Sandbox. A classificação Alpha permanece enquanto adapters bancários e fiscais reais não forem homologados para uma instituição específica.
+## Documentação principal
+
+- `docs/architecture/ARCHITECTURE.md`;
+- `docs/architecture/FLOWS.md`;
+- `docs/security/TENANT_ISOLATION.md`;
+- `docs/product/COMPLETION_MATRIX.md`;
+- `docs/financial/COLLECTION_RULES.md`;
+- `docs/integrations/BANKING_CNAB.md`;
+- `docs/integrations/SMTP_EVOLUTION.md`;
+- `docs/API.md`;
+- `docs/LEGACY_IMPORT.md`;
+- `docs/ACCEPTANCE_CHECKLIST.md`;
+- `docs/release/DELIVERY_REPORT.md`.
+
+## Pull Request
+
+- título: `PR_TITLE.md`;
+- descrição completa: `PR_DESCRIPTION.md`.

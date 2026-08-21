@@ -18,10 +18,11 @@ if [[ -n "$IDENTITY" ]]; then
 fi
 read -r -p "ATENÇÃO: a restauração substituirá Control Plane, tenants e objetos. Digite RESTAURAR: " CONFIRM
 [[ "$CONFIRM" == "RESTAURAR" ]] || { echo "Cancelado."; exit 3; }
-docker compose stop financial-api financial-worker financial-beat financial-web financial-gateway || true
+WORKERS=(financial-worker-default financial-worker-billing financial-worker-notifications financial-worker-backups)
+docker compose stop financial-api "${WORKERS[@]}" financial-beat financial-web financial-gateway || true
 docker compose run --rm \
   -v "$BACKUP_DIR:/restore:ro" \
   "${IDENTITY_MOUNT[@]}" \
   financial-api python -m app.cli restore "/restore/$BACKUP_FILE" "${IDENTITY_ARGS[@]}" --yes
-docker compose up -d financial-api financial-worker financial-beat financial-web financial-gateway
+docker compose up -d financial-api "${WORKERS[@]}" financial-beat financial-web financial-gateway
 echo "Restauração concluída. Execute: docker compose ps"

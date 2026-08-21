@@ -1,43 +1,71 @@
-# Release Notes — v0.1.0-alpha.1
+# Release Notes — v1.0.0-rc.2
 
-Esta entrega contém a plataforma SaaS financeira executável em Docker e permite validar o ciclo de cobrança de ponta a ponta usando providers Sandbox.
+Esta release substitui a entrega Alpha anterior e consolida a ARGWS Financial Platform como **release candidate completa no nível de código-fonte, interface, migrations, workers, segurança e distribuição operacional**.
 
-## Fluxo disponível
+## Destaques
+
+- Control Plane administrativo ampliado;
+- Tenant Plane financeiro ampliado;
+- banco, usuário e storage exclusivos por tenant;
+- domínios provisionados e personalizados;
+- planos, limites e capacidades aplicados no backend;
+- usuários da plataforma, API keys e suporte temporário auditado;
+- múltiplas empresas por tenant e restrição por empresa;
+- pagamentos, estornos, negociações e links públicos;
+- Pix Automático;
+- importação OFX/CSV;
+- API keys e webhooks assinados por tenant;
+- CNAB 240 e CNAB 400 extensíveis;
+- provider Sandbox e adapter Asaas;
+- SMTP, Evolution API, Outbox e régua de cobrança;
+- backup/restore e exportação de tenant;
+- pacotes completos para Docker, Dockge, CloudPanel e Portainer;
+- monitoramento opcional com Prometheus/Grafana;
+- CI, publicação de imagens e release versionada.
+
+
+## Validações específicas da rc.2
+
+- 41 testes backend aprovados;
+- 161 rotas FastAPI inventariadas;
+- 171 chamadas HTTP do frontend (123 contratos únicos) cruzadas com o backend, sem divergências;
+- migrations Alembic validadas com heads únicos e caminhos portáveis;
+- empacotador canônico com exclusão de segredos/caches, manifest interno, ZIP/TAR e checksums externos.
+
+## Fluxo coberto
 
 ```text
 Control Plane
- -> provisiona tenant
- -> cria banco, usuário PostgreSQL e bucket isolados
- -> registra domínio provisionado/customizado
- -> tenant cadastra empresas/clientes/contratos
- -> recorrência gera recebível
- -> provider Sandbox registra cobrança boleto/PIX
- -> régua envia SMTP/Evolution API
- -> pagamento/webhook baixa recebível
- -> conciliação
- -> recibo/NFS-e Sandbox
- -> documentos/auditoria
- -> backup/restore
+ -> cria plano/tenant
+ -> provisiona banco, usuário, storage e domínio
+ -> cria empresa e administrador iniciais
+ -> Tenant Plane cadastra empresas/clientes/serviços/contratos
+ -> recorrência gera recebíveis
+ -> cobrança registra boleto/Pix/Pix Automático
+ -> SMTP/Evolution comunica o cliente
+ -> pagamento, webhook, CNAB ou extrato efetua baixa/conciliação
+ -> recibo/documento fiscal/documentos são gerados
+ -> auditoria, exportação e backup preservam o histórico
 ```
 
-## Classificação Alpha
+## Distribuições
 
-A classificação Alpha não decorre de ausência do núcleo da plataforma. Ela permanece porque integrações financeiras externas exigem homologação com o banco, convênio, carteira, certificado e prefeitura escolhidos. O pacote não inventa credenciais nem declara homologação que não ocorreu.
+- Compose de build pelo fonte;
+- Compose de produção por imagens;
+- Dockge com instalador, atualização, rollback e health check;
+- CloudPanel com `clpctl`, vhosts, wildcard, SSL/ACME opcional, atualização e rollback;
+- Portainer com stack por imagens, stack Git/source e automação pela API;
+- ambientes development, staging e production.
 
-## Validação executada no pacote
+## Condição da release candidate
 
-- compilação sintática de todos os módulos Python;
-- configuração de todos os mapeamentos SQLAlchemy;
-- **38 testes backend aprovados**;
-- 85 rotas FastAPI encontradas sem duplicidade de método/caminho;
-- sintaxe de 35 blocos TypeScript/Vue verificada;
-- imports relativos do frontend validados;
-- scripts Shell validados;
-- YAML do Compose e workflows validado;
-- instalador CloudPanel/Dockge executado com `--skip-up`;
-- `.env` e credenciais gerados com permissão `0600`;
-- consistência PostgreSQL/RabbitMQ/MinIO/S3 validada;
-- importador validado contra o arquivo legado real, consolidando 319 registros da competência 2026-07;
-- validador estrutural em `PASS`.
+A release é candidata à produção após:
 
-O build Docker e a instalação npm integral precisam ser executados pelo CI incluído ou no servidor de destino porque o ambiente de empacotamento não possui daemon Docker nem acesso ao registro npm.
+1. executar build e smoke tests no servidor/CI conectado;
+2. configurar os domínios reais;
+3. preencher credenciais externas;
+4. homologar o banco/PSP, carteira, CNAB e NFS-e escolhidos;
+5. executar teste completo de backup e restore no ambiente de destino;
+6. concluir validação de segurança e operação.
+
+Providers Sandbox continuam disponíveis para testes sem credenciais. A release não declara homologação externa que não foi efetivamente executada.

@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     app_name: str = "ARGWS Financial Platform"
     app_env: Literal["development", "testing", "staging", "production"] = "development"
     app_debug: bool = False
-    app_version: str = "0.1.0-alpha.1"
+    app_version: str = "1.0.0-rc.2"
     app_timezone: str = "America/Bahia"
     app_secret_key: str = Field(min_length=32, default="development-only-change-this-secret-key")
     field_encryption_key: str = ""

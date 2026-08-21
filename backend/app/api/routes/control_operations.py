@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +14,7 @@ from app.providers.storage import S3StorageProvider
 from app.schemas.auth import AuthUser
 from app.schemas.common import SuccessResponse
 from app.services.audit import platform_audit
-from app.workers.tasks import backup_all
+from app.workers.tasks import backup_all, backup_tenant
 
 router = APIRouter(prefix="/api/control/v1", tags=["Control Plane - Operação"])
 
@@ -55,19 +57,31 @@ async def list_backups(
 
 @router.post("/backups", response_model=SuccessResponse[dict], status_code=202)
 async def run_backup(
+    tenant_id: UUID | None = Query(default=None),
     user: AuthUser = Depends(require_control_roles("PLATFORM_ADMIN")),
     session: AsyncSession = Depends(get_platform_session),
 ) -> SuccessResponse[dict]:
-    task = backup_all.apply_async(queue="financial.backups")
+    scope = "TENANT" if tenant_id else "FULL"
+    task = (
+        backup_tenant.apply_async(args=[str(tenant_id)], queue="financial.backups")
+        if tenant_id
+        else backup_all.apply_async(queue="financial.backups")
+    )
     await platform_audit(
         session,
         action="backup.requested",
         entity_type="BackupRun",
         actor_id=user.id,
-        after={"celery_task_id": task.id, "scope": "FULL"},
+        tenant_id=str(tenant_id) if tenant_id else None,
+        after={"celery_task_id": task.id, "scope": scope},
     )
     await session.commit()
-    return SuccessResponse(data={"queued": True, "task_id": task.id})
+    return SuccessResponse(data={
+        "queued": True,
+        "task_id": task.id,
+        "scope": scope,
+        "tenant_id": str(tenant_id) if tenant_id else None,
+    })
 
 
 @router.get("/backup-policy", response_model=SuccessResponse[dict])

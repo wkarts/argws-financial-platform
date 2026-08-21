@@ -24,7 +24,7 @@ from app.core.tenant_context import TenantContext
 from app.db.platform import PlatformSessionLocal
 from app.db.postgres_admin import connect_postgres_admin
 from app.db.tenant import tenant_engines
-from app.models.platform import ProvisioningJob, Tenant, TenantDatabase, TenantDomain, TenantStorage
+from app.models.platform import PlatformPlan, ProvisioningJob, Tenant, TenantDatabase, TenantDomain, TenantStorage
 from app.models.tenant import (
     Company,
     NotificationRule,
@@ -37,6 +37,7 @@ from app.providers.cloudflare import CloudflareDNSProvider
 from app.providers.storage import S3StorageProvider
 from app.schemas.control import TenantCreate
 from app.services.audit import platform_audit
+from app.services.bootstrap_defaults import ensure_tenant_roles
 from app.services.collection_rules import default_notification_rule_events, default_notification_templates
 
 _SAFE_IDENTIFIER = re.compile(r"^[a-z][a-z0-9_]{0,62}$")
@@ -74,15 +75,24 @@ class ProvisioningService:
         if await session.scalar(select(TenantDomain.id).where(TenantDomain.hostname == hostname)):
             raise APIError("TENANT_DOMAIN_EXISTS", "O domínio provisionado já está em uso.", 409)
 
+        plan = await session.scalar(
+            select(PlatformPlan).where(PlatformPlan.code == data.plan_code.upper(), PlatformPlan.is_active.is_(True))
+        )
+        if plan is None:
+            raise APIError("PLAN_NOT_FOUND", "Plano informado não existe ou está inativo.", 422)
+        features = dict(plan.features or {})
+        features.update(data.features or {})
+        limits = dict(plan.limits or {})
+        limits.update(data.limits or {})
         tenant = Tenant(
             name=data.name,
             slug=slug,
             legal_document=data.legal_document,
             status="PROVISIONING",
-            plan_code=data.plan_code,
+            plan_code=plan.code,
             timezone=data.timezone,
-            features=data.features,
-            limits=data.limits,
+            features=features,
+            limits=limits,
         )
         session.add(tenant)
         await session.flush()
@@ -224,6 +234,7 @@ class ProvisioningService:
             templates = [NotificationTemplate(**item) for item in default_notification_templates()]
             session.add_all([company, user, default_service, default_rule, *templates])
             await session.flush()
+            await ensure_tenant_roles(session)
             session.add(UserCompany(user_id=user.id, company_id=company.id, is_default=True))
             await session.commit()
 

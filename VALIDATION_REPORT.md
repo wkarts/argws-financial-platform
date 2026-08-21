@@ -1,73 +1,62 @@
-# Relatório de Validação — v0.1.0-alpha.1
+# Relatório de Validação — v1.0.0-rc.2
 
-## Resultado
+**Data de referência:** 20 de agosto de 2026 — America/Bahia.
 
-```text
-Backend pytest:               PASS — 38 testes
-Python compileall:            PASS
-SQLAlchemy configure_mappers: PASS
-Validador estrutural:         PASS
-Rotas FastAPI estáticas:      PASS — 85 rotas, sem duplicidades
-TypeScript/Vue sintaxe:       PASS — 35 blocos
-Imports relativos frontend:  PASS
-Shell/Python scripts:         PASS
-YAML/Workflows:               PASS
-Deploy --skip-up:             PASS
-```
-
-## Ensaio CloudPanel/Dockge
-
-O instalador foi executado sobre uma cópia temporária com:
+## Resultado local
 
 ```text
-PLATFORM_DOMAIN=financeiro.exemplo.com.br
-CONTROL_PLANE_HOST=control.financeiro.exemplo.com.br
-API_HOST=api.financeiro.exemplo.com.br
-TENANT_DOMAIN_ROOT=financeiro.exemplo.com.br
+Backend pytest:                    PASS — 41 testes
+Python compileall/AST:             PASS
+SQLAlchemy configure_mappers:      PASS
+Validador estrutural:              PASS
+Rotas FastAPI estáticas:           PASS — 161 decoradores
+Contrato frontend/backend:          PASS — 171 chamadas, 123 contratos, 0 divergências
+Alembic heads/portabilidade:        PASS — 2 heads válidos
+TypeScript/Vue sintaxe:             PASS — 66 blocos
+Contrato frontend/API:              PASS — 171 chamadas / 122 contratos únicos / 0 divergências
+Imports relativos frontend:        PASS
+Shell scripts:                     PASS — 23 scripts
+YAML/Workflows/Compose estático:    PASS — 16 arquivos YAML
+Exemplos .env sem chaves duplicadas: PASS
+Arquivos obrigatórios/deploys:     PASS
 ```
 
-Foram verificados:
+## Escopo verificado
 
-- geração de segredos fortes;
-- igualdade entre credenciais administrativas PostgreSQL esperadas;
-- igualdade entre credenciais internas MinIO/S3;
-- `.env` com modo `0600`;
-- `.bootstrap-credentials.txt` com modo `0600`;
-- ausência de contaminação do pacote-fonte por arquivos de runtime.
+Foram verificados: Control Plane, Tenant Plane, migrations separadas, múltiplas empresas, resolução por hostname, providers financeiros, CNAB 240/400, Pix Automático, SMTP, Evolution API, Outbox/Celery, backups, restore, Docker, Dockge, CloudPanel, Portainer, CI e release.
 
-## Arquivo legado de referência
+Também foram conferidos:
 
-Validação somente leitura do `FINANCEIRO Vitor.zip`:
+- versões canônicas entre backend, frontend, `.env.example` e `VERSION`;
+- referências de variáveis dos arquivos Compose;
+- presença das filas e serviços obrigatórios;
+- sincronismo entre o Compose canônico e os pacotes Dockge/CloudPanel;
+- correspondência entre chamadas Axios do frontend e rotas FastAPI;
+- cabeças Alembic e caminhos independentes do diretório atual;
+- ausência de `.env`, credenciais bootstrap e identidades reais no pacote;
+- consistência dos exemplos de ambiente de desenvolvimento, staging, produção e Portainer;
+- geração segura de segredos e permissões `0600` em ensaio isolado;
+- empacotamento limpo com manifest e verificação de integridade.
 
-```text
-Competência:             2026-07
-Registros consolidados:  319
-Honorários:               317
-Boletos lidos:            188
-Recibos lidos:            145
-Notas associadas:          37
-Contatos associados:       43
-Valor consolidado: R$ 523.671,37
-```
-
-A prévia sinalizou cadastros sem CPF/CNPJ ou contato suficiente para revisão humana antes da importação definitiva. Os dados originais não integram o pacote distribuído.
-
-## Limites da validação local
+## Limitações do ambiente de empacotamento
 
 Não foi possível executar neste ambiente:
 
-- `docker compose up -d --build`, por ausência do daemon Docker;
-- `npm install`, `vue-tsc`, Vitest e build Vite completos, por indisponibilidade do registro npm.
+- `docker compose up -d --build`, porque o daemon/CLI Docker não está disponível;
+- `npm install`, `vue-tsc`, Vitest e o build Vite integral, porque o ambiente não possui resolução DNS para o registro npm;
+- testes reais de SMTP, Evolution API, Cloudflare, bancos, PSP, Google Drive e Dropbox, porque dependem de credenciais externas.
 
-Essas validações estão configuradas no GitHub Actions e nos profiles Docker `financial-api-test` e `financial-web-test`.
+O repositório inclui GitHub Actions para instalar dependências, executar typecheck/test/build do frontend, validar Compose, construir todas as imagens e realizar smoke test da stack com PostgreSQL, Redis, RabbitMQ e MinIO.
 
-## Homologações externas
+## Homologações obrigatórias antes do uso financeiro real
 
-Permanecem obrigatórias antes do uso financeiro real:
-
-- banco, convênio e carteira;
-- layout CNAB específico do banco;
+- banco, PSP, convênio, carteira e certificado;
+- layout CNAB específico da instituição;
+- Pix Automático no PSP contratado;
 - NFS-e municipal ou nacional;
-- credenciais SMTP/Evolution API;
-- Google Drive/Dropbox;
-- DNS, Cloudflare e certificados do domínio definitivo.
+- SMTP e Evolution API;
+- Cloudflare/DNS/SSL;
+- Google Drive e Dropbox;
+- ensaio de backup e restore no servidor definitivo.
+
+A classificação correta desta entrega é **release candidate completa no nível de código-fonte e distribuição operacional**, sem alegar homologações externas que não foram executadas.

@@ -140,26 +140,141 @@ class CNAB240Generator:
 
 
 class CNAB240ReturnParser:
-    def parse(self, content: bytes) -> list[dict[str, str]]:
+    """Parser estrutural do retorno CNAB 240.
+
+    Consolida os segmentos T e U em um único evento. O layout base segue as
+    posições FEBRABAN; descrições e efeitos específicos continuam delegados ao
+    adapter de cada banco/carteira.
+    """
+
+    OCCURRENCES: dict[str, str] = {
+        "02": "Entrada confirmada",
+        "03": "Entrada rejeitada",
+        "06": "Liquidação",
+        "09": "Baixa",
+        "10": "Baixa solicitada",
+        "11": "Título em carteira",
+        "12": "Abatimento concedido",
+        "13": "Abatimento cancelado",
+        "14": "Vencimento alterado",
+        "15": "Liquidação em cartório",
+        "17": "Liquidação após baixa",
+        "19": "Confirmação de instrução de protesto",
+        "20": "Confirmação de sustação de protesto",
+        "23": "Entrada em cartório",
+        "28": "Tarifa",
+        "30": "Alteração rejeitada",
+    }
+
+    @staticmethod
+    def _decimal(raw: str) -> Decimal | None:
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        if not digits:
+            return None
+        return Decimal(int(digits)) / Decimal("100")
+
+    @staticmethod
+    def _date(raw: str) -> date | None:
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        if len(digits) != 8 or digits == "00000000":
+            return None
+        try:
+            return date(int(digits[4:8]), int(digits[2:4]), int(digits[0:2]))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _normalize_identifier(value: str) -> str:
+        normalized = value.strip()
+        if normalized.isdigit():
+            return normalized.lstrip("0") or "0"
+        return normalized
+
+    def parse(self, content: bytes) -> list[dict[str, object]]:
         text = content.decode("latin-1")
         lines = [line.rstrip("\r\n") for line in text.splitlines() if line.strip()]
-        if any(len(line) != 240 for line in lines):
-            raise ValueError("Arquivo de retorno CNAB 240 possui registro com tamanho inválido.")
-        events: list[dict[str, str]] = []
+        if not lines:
+            raise ValueError("Arquivo de retorno CNAB 240 vazio.")
+        invalid = [index + 1 for index, line in enumerate(lines) if len(line) != 240]
+        if invalid:
+            raise ValueError(
+                "Arquivo de retorno CNAB 240 possui registro com tamanho inválido "
+                f"nas linhas: {invalid[:20]}."
+            )
+
+        by_sequence: dict[str, dict[str, object]] = {}
+        ordered: list[str] = []
+        pending_t_sequence: str | None = None
         for line in lines:
             if line[7:8] != "3":
                 continue
             segment = line[13:14]
-            if segment not in {"T", "U"}:
-                continue
-            events.append(
-                {
-                    "segment": segment,
-                    "sequence": line[8:13],
-                    "occurrence_code": line[15:17],
+            sequence = line[8:13]
+            occurrence_code = line[15:17]
+            if segment == "T":
+                event: dict[str, object] = {
+                    "sequence": sequence,
+                    "occurrence_code": occurrence_code,
+                    "occurrence_description": self.OCCURRENCES.get(
+                        occurrence_code, f"Ocorrência {occurrence_code}"
+                    ),
                     "our_number": line[37:57].strip(),
+                    "our_number_normalized": self._normalize_identifier(line[37:57]),
                     "document_number": line[58:73].strip(),
-                    "raw": line,
+                    "document_number_normalized": self._normalize_identifier(line[58:73]),
+                    "due_date": self._date(line[73:81]),
+                    "title_amount": self._decimal(line[81:96]),
+                    "payer_tax_id": line[132:147].strip(),
+                    "payer_name": line[147:187].strip(),
+                    "amount": None,
+                    "net_amount": None,
+                    "occurrence_date": None,
+                    "credit_date": None,
+                    "segments": {"T": line},
                 }
-            )
-        return events
+                by_sequence[sequence] = event
+                ordered.append(sequence)
+                pending_t_sequence = sequence
+            elif segment == "U":
+                # Na prática, o U sucede o T e possui seu próprio sequencial.
+                target_sequence = pending_t_sequence
+                event = by_sequence.get(target_sequence or "")
+                if event is None:
+                    target_sequence = sequence
+                    event = {
+                        "sequence": sequence,
+                        "occurrence_code": occurrence_code,
+                        "occurrence_description": self.OCCURRENCES.get(
+                            occurrence_code, f"Ocorrência {occurrence_code}"
+                        ),
+                        "our_number": "",
+                        "our_number_normalized": "",
+                        "document_number": "",
+                        "document_number_normalized": "",
+                        "due_date": None,
+                        "title_amount": None,
+                        "payer_tax_id": "",
+                        "payer_name": "",
+                        "segments": {},
+                    }
+                    by_sequence[target_sequence] = event
+                    ordered.append(target_sequence)
+                event["occurrence_code"] = occurrence_code or event.get("occurrence_code")
+                event["occurrence_description"] = self.OCCURRENCES.get(
+                    str(event["occurrence_code"]), f"Ocorrência {event['occurrence_code']}"
+                )
+                event["interest_amount"] = self._decimal(line[17:32])
+                event["discount_amount"] = self._decimal(line[32:47])
+                event["abatement_amount"] = self._decimal(line[47:62])
+                event["iof_amount"] = self._decimal(line[62:77])
+                event["amount"] = self._decimal(line[77:92])
+                event["net_amount"] = self._decimal(line[92:107])
+                event["occurrence_date"] = self._date(line[137:145])
+                event["credit_date"] = self._date(line[145:153])
+                segments = dict(event.get("segments") or {})
+                segments["U"] = line
+                event["segments"] = segments
+                pending_t_sequence = None
+
+        return [by_sequence[key] for key in ordered]
+

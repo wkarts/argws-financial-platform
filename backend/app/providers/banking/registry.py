@@ -3,11 +3,12 @@ from __future__ import annotations
 from app.core.errors import APIError
 from app.providers.banking.base import BankingProvider
 from app.providers.banking.sandbox import SandboxBankingProvider
+from app.providers.banking.asaas import AsaasBankingProvider
 
 
 class BankingProviderRegistry:
     def __init__(self) -> None:
-        self._providers: dict[str, BankingProvider] = {"SANDBOX": SandboxBankingProvider()}
+        self._providers: dict[str, BankingProvider] = {"SANDBOX": SandboxBankingProvider(), "ASAAS": AsaasBankingProvider()}
 
     def register(self, name: str, provider: BankingProvider) -> None:
         self._providers[name.upper()] = provider

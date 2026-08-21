@@ -19,9 +19,12 @@ from app.models.platform import PlatformUser, Tenant
 from app.models.tenant import Company, ServiceCatalog
 from app.schemas.control import TenantCreate
 from app.services.backup import BackupService
+from app.services.bootstrap_defaults import ensure_platform_defaults, ensure_tenant_roles
 from app.services.provisioning import provisioning_service
 from app.services.restore import RestoreService
 from app.services.tenant_resolver import TenantResolver
+
+
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
@@ -39,6 +42,8 @@ def migrate_platform() -> None:
 
 async def bootstrap_async() -> None:
     async with PlatformSessionLocal() as session:
+        await ensure_platform_defaults(session)
+        await session.commit()
         admin = await session.scalar(select(PlatformUser).where(PlatformUser.email == str(settings.platform_admin_email).lower()))
         if admin is None:
             session.add(
@@ -87,6 +92,30 @@ def migrate_platform_command() -> None:
     click.echo("Migrations do Control Plane aplicadas.")
 
 
+async def migrate_all_tenants_async() -> dict[str, str]:
+    results: dict[str, str] = {}
+    async with PlatformSessionLocal() as session:
+        tenant_ids = list((await session.scalars(select(Tenant.id).order_by(Tenant.created_at))).all())
+        resolver = TenantResolver(session)
+        for tenant_id in tenant_ids:
+            try:
+                context = await resolver.resolve_by_id(str(tenant_id), require_active=False)
+                await provisioning_service._run_tenant_migrations(context)
+                results[str(tenant_id)] = "migrated"
+            except Exception as exc:  # noqa: BLE001
+                results[str(tenant_id)] = f"error:{type(exc).__name__}:{exc}"
+    return results
+
+
+@cli.command("migrate-all-tenants")
+def migrate_all_tenants_command() -> None:
+    results = run(migrate_all_tenants_async())
+    failures = {key: value for key, value in results.items() if value.startswith("error:")}
+    click.echo(json.dumps(results, ensure_ascii=False, indent=2))
+    if failures:
+        raise click.ClickException(f"Falha ao migrar {len(failures)} tenant(s).")
+
+
 @cli.command("bootstrap")
 def bootstrap_command() -> None:
     run(bootstrap_async())
@@ -100,12 +129,64 @@ def init_command() -> None:
 
 
 @cli.command("backup")
-def backup_command() -> None:
+@click.option("--tenant-id", type=click.UUID, default=None, help="Gera backup portável de um único tenant.")
+def backup_command(tenant_id: UUID | None) -> None:
     async def action() -> None:
         async with PlatformSessionLocal() as session:
-            result = await BackupService(session).create_full()
-            click.echo(json.dumps({"id": str(result.id), "path": result.path, "sha256": result.checksum}, indent=2))
+            service = BackupService(session)
+            result = await service.create_tenant(tenant_id) if tenant_id else await service.create_full()
+            click.echo(json.dumps({
+                "id": str(result.id),
+                "scope": result.scope,
+                "tenant_id": str(result.tenant_id) if result.tenant_id else None,
+                "path": result.path,
+                "sha256": result.checksum,
+            }, ensure_ascii=False, indent=2))
     run(action())
+
+
+@cli.command("restore-validate")
+@click.argument("archive", type=click.Path(exists=True, path_type=Path))
+@click.option("--identity", type=click.Path(exists=True, path_type=Path), default=None)
+@click.option("--sha256", "expected_sha256", default=None)
+def restore_validate_command(archive: Path, identity: Path | None, expected_sha256: str | None) -> None:
+    result = run(RestoreService().validate_archive(
+        archive,
+        identity=identity,
+        expected_sha256=expected_sha256,
+    ))
+    click.echo(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+@cli.command("restore-tenant")
+@click.argument("archive", type=click.Path(exists=True, path_type=Path))
+@click.option("--tenant-id", type=click.UUID, required=True)
+@click.option("--identity", type=click.Path(exists=True, path_type=Path), default=None)
+@click.option("--sha256", "expected_sha256", default=None)
+@click.option("--yes", is_flag=True, help="Confirma a restauração destrutiva do tenant.")
+def restore_tenant_command(
+    archive: Path,
+    tenant_id: UUID,
+    identity: Path | None,
+    expected_sha256: str | None,
+    yes: bool,
+) -> None:
+    if not yes:
+        raise click.ClickException("Restauração não confirmada. Use --yes após colocar a plataforma em manutenção.")
+    result = run(RestoreService().restore_tenant(
+        archive,
+        tenant_id,
+        identity=identity,
+        expected_sha256=expected_sha256,
+    ))
+    click.echo(json.dumps({
+        "archive": result.archive,
+        "scope": result.scope,
+        "tenant_id": result.tenant_id,
+        "tenants_restored": result.tenants_restored,
+        "buckets_restored": result.buckets_restored,
+        "manifest_version": result.manifest_version,
+    }, ensure_ascii=False, indent=2))
 
 
 @cli.command("restore")
@@ -125,6 +206,8 @@ def restore_command(archive: Path, identity: Path | None, expected_sha256: str |
             "tenants_restored": result.tenants_restored,
             "buckets_restored": result.buckets_restored,
             "manifest_version": result.manifest_version,
+            "scope": result.scope,
+            "tenant_id": result.tenant_id,
         }, ensure_ascii=False, indent=2))
 
     run(action())

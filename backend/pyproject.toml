@@ -1,6 +1,6 @@
 [project]
 name = "argws-financial-platform"
-version = "0.1.0a1"
+version = "1.0.0rc1"
 description = "Plataforma SaaS financeira multitenant"
 requires-python = ">=3.13"
 

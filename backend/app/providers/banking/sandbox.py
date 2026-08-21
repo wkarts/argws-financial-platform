@@ -3,7 +3,12 @@ from __future__ import annotations
 import hashlib
 from datetime import UTC, datetime
 
-from app.providers.banking.base import BankChargeRequest, BankChargeResult
+from app.providers.banking.base import (
+    BankChargeRequest,
+    BankChargeResult,
+    PixAutomaticAuthorizationRequest,
+    PixAutomaticAuthorizationResult,
+)
 
 
 class SandboxBankingProvider:
@@ -33,8 +38,44 @@ class SandboxBankingProvider:
             raw={"sandbox": True, "created_at": datetime.now(UTC).isoformat()},
         )
 
-    async def cancel_charge(self, external_id: str) -> None:
+    async def cancel_charge(self, external_id: str, agreement: dict | None = None) -> None:
         return None
 
-    async def get_charge(self, external_id: str) -> BankChargeResult:
+    async def get_charge(self, external_id: str, agreement: dict | None = None) -> BankChargeResult:
         return BankChargeResult(provider=self.name, external_id=external_id, status="REGISTERED")
+
+
+    async def create_pix_automatic_authorization(
+        self, request: PixAutomaticAuthorizationRequest
+    ) -> PixAutomaticAuthorizationResult:
+        digest = hashlib.sha256(
+            f"pix-auto:{request.internal_contract_id}:{request.customer.tax_id}:{request.start_date}".encode()
+        ).hexdigest()
+        external_id = f"PXA-SBX-{digest[:24].upper()}"
+        qr = f"00020101021226800014BR.GOV.BCB.PIX01{len(digest[:32]):02d}{digest[:32]}5204000053039865802BR6304ABCD"
+        return PixAutomaticAuthorizationResult(
+            provider=self.name,
+            external_id=external_id,
+            status="CREATED",
+            authorization_url=f"/p/pix-automatic/{external_id}",
+            qr_copy_paste=qr,
+            raw={
+                "sandbox": True,
+                "frequency": request.frequency,
+                "startDate": request.start_date.isoformat(),
+                "finishDate": request.finish_date.isoformat() if request.finish_date else None,
+                "createdAt": datetime.now(UTC).isoformat(),
+            },
+        )
+
+    async def get_pix_automatic_authorization(
+        self, external_id: str, agreement: dict | None = None
+    ) -> PixAutomaticAuthorizationResult:
+        return PixAutomaticAuthorizationResult(
+            provider=self.name, external_id=external_id, status="ACTIVE", raw={"sandbox": True}
+        )
+
+    async def cancel_pix_automatic_authorization(
+        self, external_id: str, agreement: dict | None = None
+    ) -> None:
+        return None

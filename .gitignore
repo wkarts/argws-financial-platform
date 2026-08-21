@@ -17,3 +17,8 @@ rclone.conf
 .DS_Store
 .idea/
 .vscode/
+release-artifacts/
+.releases/
+financial-data/
+.bootstrap-credentials.txt
+deployments/portainer/stack.env
