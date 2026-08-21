@@ -29,17 +29,31 @@ require_cmd python3; require_cmd tar
 TARGET="$STACKS_DIR/$STACK_NAME"
 sync_project "$ROOT" "$TARGET"
 cd "$TARGET"
-prepare_env "$TARGET" "$TARGET/deployments/dockge/.env.example" "$TARGET/.env" "$DOMAIN" "$EMAIL"
+
+# O arquivo efetivamente usado pelo Dockge fica na raiz da stack. Isso também
+# garante que ./data-* seja resolvido em relação ao diretório da stack.
+cp "$TARGET/deployments/dockge/compose.yaml" "$TARGET/compose.yaml"
+cp "$TARGET/deployments/dockge/.env.example" "$TARGET/.env.example"
+
+prepare_env "$TARGET" "$TARGET/.env.example" "$TARGET/.env" "$DOMAIN" "$EMAIL"
 
 # Dockge sempre consome as imagens publicadas; nunca compila o código-fonte.
 set_env .env APP_PULL_POLICY always
+set_env .env FINANCIAL_DATA_ROOT .
 set_env .env BACKEND_IMAGE ghcr.io/wkarts/argws-financial-api:latest
 set_env .env FRONTEND_IMAGE ghcr.io/wkarts/argws-financial-web:latest
 set_env .env GATEWAY_IMAGE ghcr.io/wkarts/argws-financial-gateway:latest
 set_env .env ACME_IMAGE ghcr.io/wkarts/argws-financial-acme:latest
 set_env .env CLOUDPANEL_AGENT_IMAGE ghcr.io/wkarts/argws-financial-cloudpanel-agent:latest
 
-export COMPOSE_FILE_PATH="deployments/dockge/compose.yaml"
+# Persistência explícita e auditável dentro da pasta da stack.
+mkdir -p \
+  data-postgres data-redis data-rabbitmq data-minio \
+  data-backups data-runtime data-celery secrets
+chmod 0777 data-postgres data-redis data-rabbitmq data-minio
+chmod 0770 data-backups data-runtime data-celery
+
+export COMPOSE_FILE_PATH="compose.yaml"
 validate_project "$TARGET" true
 
 if ! $SKIP_UP; then
@@ -56,6 +70,7 @@ if ! $SKIP_UP; then
 fi
 
 log "Stack preparada em $TARGET"
+log "Persistência local: $TARGET/data-*"
 log "No Dockge, use Scan Stacks Folder e abra '$STACK_NAME'."
 printf 'Gateway local: http://127.0.0.1:%s\nControl Plane: https://control.%s\nTenant: https://<slug>.%s\nCredenciais: %s/.bootstrap-credentials.txt\n' \
   "$(get_env .env GATEWAY_PORT)" "$DOMAIN" "$DOMAIN" "$TARGET"
