@@ -6,14 +6,14 @@ on:
     types: [completed]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: verify-published-release-${{ github.repository }}
   cancel-in-progress: false
 
 jobs:
-  record-proof:
+  verify-release:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     env:
@@ -22,10 +22,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
-          fetch-depth: 0
+          fetch-depth: 1
 
       - name: Verify normal/latest Release and assets
-        id: verify
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -61,6 +60,7 @@ jobs:
             "ARGWS-Financial-Platform-v${version}.tar.gz"
             "ARGWS-Financial-Platform-v${version}-SHA256SUMS.txt"
             "ARGWS-Financial-Platform-v${version}-PACKAGE_REPORT.json"
+            "ARGWS-Financial-Platform-v${version}-Dockge.zip"
             "CONTAINER_IMAGES.txt"
             "VALIDATION_REPORT.json"
             "VALIDATION_REPORT.md"
@@ -74,54 +74,22 @@ jobs:
           done
 
           {
-            echo "version=$version"
-            echo "tag=$tag"
-            echo "url=$release_url"
-            echo "asset_count=${#expected[@]}"
-          } >> "$GITHUB_OUTPUT"
-
-          printf '%s\n' "$assets" > /tmp/release-assets.txt
-
-      - name: Record publication proof in repository
-        shell: bash
-        env:
-          VERSION_VALUE: ${{ steps.verify.outputs.version }}
-          TAG_VALUE: ${{ steps.verify.outputs.tag }}
-          RELEASE_URL: ${{ steps.verify.outputs.url }}
-          ASSET_COUNT: ${{ steps.verify.outputs.asset_count }}
-        run: |
-          set -Eeuo pipefail
-          mkdir -p docs/release
-
-          {
-            echo "# Última release publicada e verificada"
+            echo "ARGWS Financial Platform"
+            echo "Version: $version"
+            echo "Tag: $tag"
+            echo "Release: $release_url"
+            echo "Draft: false"
+            echo "Pre-release: false"
+            echo "Latest: true"
+            echo "Assets verified: ${#expected[@]}"
             echo
-            echo "- Versão: \`$VERSION_VALUE\`"
-            echo "- Tag: \`$TAG_VALUE\`"
-            echo "- Release: $RELEASE_URL"
-            echo "- Tipo: Release normal"
-            echo "- Draft: false"
-            echo "- Pre-release: false"
-            echo "- Latest: true"
-            echo "- Assets verificados: $ASSET_COUNT"
-            echo "- Workflow de publicação: SUCCESS"
-            echo "- Commit publicado: \`${{ github.event.workflow_run.head_sha }}\`"
-            echo
-            echo "## Assets"
-            echo
-            while IFS= read -r asset; do
-              [[ -n "$asset" ]] && echo "- \`$asset\`"
-            done < /tmp/release-assets.txt
-          } > docs/release/LAST_PUBLISHED_RELEASE.md
+            printf '%s\n' "$assets"
+          } > RELEASE_PROOF.txt
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/release/LAST_PUBLISHED_RELEASE.md
-
-          if git diff --cached --quiet; then
-            echo "Evidência já está atualizada."
-            exit 0
-          fi
-
-          git commit -m "docs(release): registrar Release normal verificada de $TAG_VALUE"
-          git push origin HEAD:main
+      - name: Upload release proof artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-proof-${{ github.event.workflow_run.id }}
+          path: RELEASE_PROOF.txt
+          if-no-files-found: error
+          retention-days: 30

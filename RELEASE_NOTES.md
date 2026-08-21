@@ -1,35 +1,23 @@
-# Release Notes — v1.0.0-rc.5
+# Release Notes — v1.0.0-rc.6
 
-Esta release consolida o deploy **Dockge image-only** e corrige a persistência para que os dados fiquem diretamente visíveis dentro da pasta da stack em `./data-*`.
+Esta release corrige o último ponto que ainda podia levar o Dockge a tentar fazer build local: a distribuição passa a publicar um **bundle Dockge dedicado**, pronto para extração direta no diretório de stacks.
 
-## Dockge image-only
+## Novo asset Dockge
 
-A stack `deployments/dockge/compose.yaml` utiliza exclusivamente imagens publicadas:
+A Release passa a incluir:
 
 ```text
-ghcr.io/wkarts/argws-financial-api:latest
-ghcr.io/wkarts/argws-financial-web:latest
-ghcr.io/wkarts/argws-financial-gateway:latest
+ARGWS-Financial-Platform-v1.0.0-rc.6-Dockge.zip
 ```
 
-O deploy Dockge não depende de:
-
-- `backend/`;
-- `frontend/`;
-- Dockerfiles;
-- `infrastructure/nginx/`;
-- build local da aplicação.
-
-`APP_PULL_POLICY=always` mantém o runtime no canal `latest`.
-
-## Persistência visível em `./data-*`
-
-Com `FINANCIAL_DATA_ROOT=.`, a pasta da stack passa a concentrar toda a persistência principal:
+Dentro dele existe uma única pasta operacional:
 
 ```text
 argws-financial-platform/
 ├── compose.yaml
-├── .env
+├── .env.example
+├── README.md
+├── DOCKGE_PACKAGE.json
 ├── data-postgres/
 ├── data-redis/
 ├── data-rabbitmq/
@@ -39,7 +27,50 @@ argws-financial-platform/
 └── data-celery/
 ```
 
-Mapeamentos:
+O `compose.yaml` desse bundle é o Compose **image-only** do Dockge. Ele não contém `build:` e não depende de `backend/`, `frontend/` ou Dockerfiles locais.
+
+## Por que esta correção foi necessária
+
+O pacote completo de código-fonte continua contendo o `compose.yaml` da raiz destinado a desenvolvimento/build. Quando esse pacote era extraído diretamente dentro da pasta da stack, o Dockge podia selecionar esse Compose e tentar localizar:
+
+```text
+./backend
+./frontend
+```
+
+O sintoma típico era:
+
+```text
+[+] Building ...
+could not find .../frontend: no such file or directory
+```
+
+A partir desta release, para Dockge o asset correto é explicitamente o arquivo `-Dockge.zip`.
+
+## Imagens operacionais protegidas contra `.env` legado
+
+O Compose Dockge fixa diretamente:
+
+```text
+ghcr.io/wkarts/argws-financial-api:latest
+ghcr.io/wkarts/argws-financial-web:latest
+ghcr.io/wkarts/argws-financial-gateway:latest
+```
+
+com `pull_policy: always` no próprio Compose. Assim, valores antigos como `APP_PULL_POLICY=build` ou `BACKEND_IMAGE=argws-financial-api:latest` em um `.env` reaproveitado não conseguem reativar build local nem substituir as imagens oficiais do runtime Dockge.
+
+O `.env.example` continua documentando:
+
+```env
+APP_PULL_POLICY=always
+FINANCIAL_DATA_ROOT=.
+```
+
+As tags versionadas permanecem apenas para auditoria e rollback.
+
+## Persistência
+
+A persistência continua em bind mounts visíveis dentro da própria pasta da stack:
 
 ```text
 ./data-postgres   -> /var/lib/postgresql/data
@@ -51,49 +82,28 @@ Mapeamentos:
 ./data-celery     -> /var/lib/celery
 ```
 
-A stack Dockge não usa volumes Docker nomeados para esses dados. Isso simplifica auditoria, backup físico, migração e restauração da pasta completa da stack.
+Nenhum desses dados depende de volumes Docker nomeados na stack Dockge.
 
-## Atualização e rollback
+## Validação e CI
 
-- `deployments/dockge/install.sh` força imagens GHCR `latest` e `FINANCIAL_DATA_ROOT=.`;
-- `deployments/dockge/update.sh` preserva os diretórios `data-*`, realiza backup e usa `docker compose pull`;
-- `deployments/dockge/rollback.sh <versão>` troca temporariamente API, Web e Gateway para aliases imutáveis da release;
-- `deployments/dockge/healthcheck.sh` valida a stack image-only.
+A CI agora também executa `scripts/package_dockge_stack.py` e valida que o ZIP dedicado é gerado corretamente. `scripts/validate_dockge_runtime.py` verifica ausência de `build:`, bind mounts `data-*`, imagens GHCR `:latest` fixas e `pull_policy: always` fixo.
 
-## Validação contra regressão
+O workflow de Release só conclui se o bundle Dockge existir e for publicado junto com os demais assets. A verificação pós-release passa a validar nove assets, incluindo o novo ZIP Dockge.
 
-Foi adicionado `scripts/validate_dockge_runtime.py`, executado pela CI. A validação falha se:
+## Política de alterações no repositório
 
-- algum serviço Dockge voltar a possuir `build:`;
-- o Compose voltar a depender de Dockerfiles/código-fonte;
-- forem reintroduzidos volumes Docker nomeados;
-- faltar algum bind mount `data-*` obrigatório;
-- `FINANCIAL_DATA_ROOT` deixar de ser `.` no ambiente padrão Dockge;
-- API, Web ou Gateway deixarem de usar as imagens GHCR `:latest`.
+O workflow de prova de Release deixa de escrever diretamente na `main`. Ele apenas valida a Release e publica um artefato de prova no GitHub Actions. Alterações de código, configuração e documentação seguem o fluxo branch → Pull Request → CI → merge.
 
-## Versionamento e publicação
+## CloudPanel
 
-`VERSION` continua sendo a única fonte canônica da versão da aplicação. Esta correção é preparada como `v1.0.0-rc.5` e segue o fluxo branch → Pull Request → CI → merge → Release.
-
-A publicação continua gerando:
-
-- imagens GHCR `api`, `web`, `gateway`, `acme` e `cloudpanel-agent`;
-- ZIP, TAR.ZST e TAR.GZ;
-- checksums SHA-256;
-- relatório/inventário do pacote;
-- artefatos do GitHub Actions;
-- GitHub Release normal e Latest.
-
-## CloudPanel / Cloudflare
-
-O CloudPanel permanece externo à stack e deve encaminhar o domínio para:
+O reverse proxy continua externo à stack e deve apontar para:
 
 ```text
 http://127.0.0.1:GATEWAY_PORT
 ```
 
-preservando o cabeçalho `Host`. O mesmo gateway atende domínio principal, Control Plane, API e wildcard dos tenants.
+preservando o cabeçalho `Host`.
 
 ## Segurança operacional
 
-Não exclua os diretórios `data-*` durante atualização/redeploy. Credenciais bancárias, Cloudflare, SMTP, Evolution API, MinIO, PostgreSQL e usuários administrativos continuam sendo configuração externa e devem ser rotacionadas quando expostas.
+Não exclua os diretórios `data-*` em atualização ou redeploy. Segredos expostos anteriormente devem ser rotacionados antes de produção.

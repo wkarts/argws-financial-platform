@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import yaml
 
@@ -71,8 +71,20 @@ def main() -> int:
     if missing_services:
         fail(f"Serviços ausentes no Dockge: {missing_services}")
 
-    # Verificamos os bind mounts no YAML bruto porque a sintaxe curta do Compose
-    # contém ':' dentro de ${VAR:-default}, o que torna split por ':' ambíguo.
+    expected_runtime = {
+        "financial-api": "ghcr.io/wkarts/argws-financial-api:latest",
+        "financial-web": "ghcr.io/wkarts/argws-financial-web:latest",
+        "financial-gateway": "ghcr.io/wkarts/argws-financial-gateway:latest",
+    }
+    for service_name, expected_image in expected_runtime.items():
+        service = services.get(service_name)
+        if not isinstance(service, dict):
+            fail(f"{service_name} inválido no Compose Dockge")
+        if service.get("pull_policy") != "always":
+            fail(f"{service_name} deve usar pull_policy: always fixo no Compose Dockge")
+        if service.get("image") != expected_image:
+            fail(f"{service_name} deve usar imagem fixa {expected_image}")
+
     required_bind_sources = {
         "${FINANCIAL_DATA_ROOT:-.}/data-postgres",
         "${FINANCIAL_DATA_ROOT:-.}/data-redis",
@@ -103,7 +115,8 @@ def main() -> int:
 
     print("Dockge runtime: PASS")
     print("- image-only: OK")
-    print("- GHCR latest: OK")
+    print("- pull_policy always fixo: OK")
+    print("- imagens GHCR latest fixas: OK")
     print("- bind mounts ./data-*: OK")
     print("- named volumes: ausentes")
     return 0

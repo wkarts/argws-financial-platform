@@ -63,6 +63,8 @@ jobs:
       - run: pip install PyYAML SQLAlchemy pydantic pydantic-settings cryptography email-validator
       - run: python scripts/validate_project.py
       - run: python scripts/validate_dockge_runtime.py
+      - run: python scripts/package_dockge_stack.py --output-dir /tmp/dockge-package
+      - run: test -s "/tmp/dockge-package/ARGWS-Financial-Platform-v$(tr -d '[:space:]' < VERSION)-Dockge.zip"
       - run: cp .env.example .env
       - run: python scripts/generate_secrets.py --env .env
       - run: docker compose config --quiet

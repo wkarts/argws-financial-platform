@@ -78,7 +78,8 @@ def check_required_files() -> None:
         "infrastructure/nginx/gateway.conf", "infrastructure/docker/gateway/Dockerfile",
         "infrastructure/backup/rclone.conf.example", "secrets/backup-age-identity.txt.example",
         "scripts/deploy_cloudpanel_dockge.sh", "scripts/install_local.sh", "scripts/backup.sh", "scripts/restore.sh",
-        "scripts/generate_secrets.py", "scripts/portainer_deploy.py", "scripts/package_release.py", "scripts/deploy/lib.sh",
+        "scripts/generate_secrets.py", "scripts/portainer_deploy.py", "scripts/package_release.py",
+        "scripts/package_dockge_stack.py", "scripts/validate_dockge_runtime.py", "scripts/deploy/lib.sh",
         "deployments/docker/compose.images.yaml", "deployments/docker/install.sh", "deployments/docker/.env.example",
         "deployments/dockge/compose.yaml", "deployments/dockge/install.sh", "deployments/dockge/.env.example",
         "deployments/cloudpanel/compose.yaml", "deployments/cloudpanel/install.sh", "deployments/cloudpanel/.env.example",
@@ -215,10 +216,15 @@ def check_compose() -> None:
     dockge_text = (ROOT / "deployments/dockge/compose.yaml").read_text(encoding="utf-8")
     if re.search(r"^\s+build:\s*$", dockge_text, re.MULTILINE):
         error("A stack Dockge não pode depender de build local")
-    if "GATEWAY_IMAGE" not in dockge_text:
-        error("Stack Dockge não referencia a imagem publicada do gateway")
-    if "ghcr.io/wkarts/argws-financial-api:latest" not in dockge_text:
-        error("Stack Dockge não possui fallback GHCR latest para a API")
+    for image in (
+        "ghcr.io/wkarts/argws-financial-api:latest",
+        "ghcr.io/wkarts/argws-financial-web:latest",
+        "ghcr.io/wkarts/argws-financial-gateway:latest",
+    ):
+        if image not in dockge_text:
+            error(f"Stack Dockge não fixa imagem GHCR latest: {image}")
+    if dockge_text.count("pull_policy: always") < 3:
+        error("Stack Dockge deve fixar pull_policy: always para API, Web e Gateway")
     if re.search(r"^\s+APP_VERSION:\s*", dockge_text, re.MULTILINE):
         error("Stack Dockge não deve sobrescrever a versão embutida nas imagens")
 
