@@ -1,62 +1,66 @@
-# Relatório de Validação — v1.0.0-rc.2
+# Relatório de Validação — ARGWS Financial Platform
 
-**Data de referência:** 20 de agosto de 2026 — America/Bahia.
+A versão validada é sempre a indicada pelo arquivo [`VERSION`](VERSION). O workflow `Publish Release` regenera `VALIDATION_REPORT.json` antes de empacotar e publicar cada release.
 
-## Resultado local
+## Contrato de validação
 
 ```text
-Backend pytest:                    PASS — 41 testes
-Python compileall/AST:             PASS
-SQLAlchemy configure_mappers:      PASS
-Validador estrutural:              PASS
-Rotas FastAPI estáticas:           PASS — 161 decoradores
-Contrato frontend/backend:          PASS — 171 chamadas, 123 contratos, 0 divergências
-Alembic heads/portabilidade:        PASS — 2 heads válidos
-TypeScript/Vue sintaxe:             PASS — 66 blocos
-Contrato frontend/API:              PASS — 171 chamadas / 122 contratos únicos / 0 divergências
-Imports relativos frontend:        PASS
-Shell scripts:                     PASS — 23 scripts
-YAML/Workflows/Compose estático:    PASS — 16 arquivos YAML
-Exemplos .env sem chaves duplicadas: PASS
-Arquivos obrigatórios/deploys:     PASS
+Backend pytest:                    obrigatório
+Python compileall/AST:             obrigatório
+SQLAlchemy configure_mappers:      obrigatório
+Validador estrutural:              obrigatório
+Rotas FastAPI:                     inventariadas e sem duplicidades locais
+Contrato frontend/backend:          obrigatório
+Alembic heads/portabilidade:        obrigatório
+TypeScript/Vue typecheck:           obrigatório
+Vitest:                             obrigatório
+Build Vite:                         obrigatório
+Docker builds:                      api/web/gateway/acme/cloudpanel-agent
+Docker smoke:                       API + Control Plane + tenant demo
+Compose Docker/Dockge/CloudPanel:   obrigatório
+Stack Portainer:                    obrigatória
 ```
+
+## Versionamento
+
+- `VERSION` é a única fonte de verdade;
+- `APP_VERSION` é sincronizada automaticamente no bootstrap/deploy;
+- `VITE_APP_VERSION` é injetada pelo Vite a partir de `VERSION`;
+- `frontend/package.json` não duplica a versão da aplicação;
+- os Dockerfiles carregam `VERSION` dentro das imagens;
+- os exemplos `.env` deixam `APP_VERSION` e `VITE_APP_VERSION` vazios;
+- as imagens operacionais usam sempre `:latest`;
+- o pipeline também publica alias imutável da versão e SHA para auditoria/rollback, sem tornar o runtime dependente deles.
+
+## Publicação obrigatória
+
+A release só é criada após:
+
+1. CI reutilizável completa;
+2. build e smoke tests;
+3. publicação e verificação das cinco imagens GHCR;
+4. validação estrutural final;
+5. geração de ZIP, TAR.ZST e TAR.GZ;
+6. geração de checksums SHA-256 e relatório do pacote;
+7. upload dos artefatos do GitHub Actions;
+8. criação da tag e do GitHub Release.
 
 ## Escopo verificado
 
-Foram verificados: Control Plane, Tenant Plane, migrations separadas, múltiplas empresas, resolução por hostname, providers financeiros, CNAB 240/400, Pix Automático, SMTP, Evolution API, Outbox/Celery, backups, restore, Docker, Dockge, CloudPanel, Portainer, CI e release.
+São cobertos Control Plane, Tenant Plane, migrations separadas, múltiplas empresas, resolução por hostname, providers financeiros, CNAB 240/400, Pix Automático, SMTP, Evolution API, Outbox/Celery, backups, restore, Docker, Dockge, CloudPanel, Portainer, CI e publicação.
 
-Também foram conferidos:
+Também são verificados:
 
-- versões canônicas entre backend, frontend, `.env.example` e `VERSION`;
 - referências de variáveis dos arquivos Compose;
 - presença das filas e serviços obrigatórios;
-- sincronismo entre o Compose canônico e os pacotes Dockge/CloudPanel;
-- correspondência entre chamadas Axios do frontend e rotas FastAPI;
-- cabeças Alembic e caminhos independentes do diretório atual;
-- ausência de `.env`, credenciais bootstrap e identidades reais no pacote;
-- consistência dos exemplos de ambiente de desenvolvimento, staging, produção e Portainer;
-- geração segura de segredos e permissões `0600` em ensaio isolado;
+- sincronismo entre o Compose canônico e Dockge/CloudPanel;
+- correspondência entre chamadas Axios e rotas FastAPI;
+- cabeças Alembic e caminhos portáveis;
+- ausência de `.env`, credenciais bootstrap e identidades reais na distribuição;
+- consistência dos exemplos de ambiente development, staging, production e Portainer;
+- política de imagens `:latest` para runtime;
 - empacotamento limpo com manifest e verificação de integridade.
 
-## Limitações do ambiente de empacotamento
+## Homologações externas
 
-Não foi possível executar neste ambiente:
-
-- `docker compose up -d --build`, porque o daemon/CLI Docker não está disponível;
-- `npm install`, `vue-tsc`, Vitest e o build Vite integral, porque o ambiente não possui resolução DNS para o registro npm;
-- testes reais de SMTP, Evolution API, Cloudflare, bancos, PSP, Google Drive e Dropbox, porque dependem de credenciais externas.
-
-O repositório inclui GitHub Actions para instalar dependências, executar typecheck/test/build do frontend, validar Compose, construir todas as imagens e realizar smoke test da stack com PostgreSQL, Redis, RabbitMQ e MinIO.
-
-## Homologações obrigatórias antes do uso financeiro real
-
-- banco, PSP, convênio, carteira e certificado;
-- layout CNAB específico da instituição;
-- Pix Automático no PSP contratado;
-- NFS-e municipal ou nacional;
-- SMTP e Evolution API;
-- Cloudflare/DNS/SSL;
-- Google Drive e Dropbox;
-- ensaio de backup e restore no servidor definitivo.
-
-A classificação correta desta entrega é **release candidate completa no nível de código-fonte e distribuição operacional**, sem alegar homologações externas que não foram executadas.
+O pipeline valida a plataforma e a distribuição, mas não substitui credenciais e homologações externas de banco/PSP, carteira, CNAB específico, NFS-e, SMTP, Evolution API, Cloudflare, Google Drive e Dropbox.
