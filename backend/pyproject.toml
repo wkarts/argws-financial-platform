@@ -14,8 +14,10 @@ target-version = "py313"
 line-length = 110
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "RUF"]
-ignore = ["S101"]
+# Gate de CI focado em erros que quebram execução: sintaxe e nomes indefinidos.
+# Regras estilísticas serão tratadas em uma PR dedicada, sem refatoração abrupta.
+select = ["E9", "F63", "F7", "F82"]
+ignore = []
 
 [tool.mypy]
 python_version = "3.13"

@@ -18,6 +18,7 @@ from app.models.tenant import (
     Contract,
     Customer,
     CustomerContact,
+    Notification,
     NotificationRule,
     NotificationTemplate,
     Receivable,

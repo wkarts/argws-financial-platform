@@ -1,6 +1,12 @@
 #!/usr/bin/env sh
 set -eu
 
+case "${CF_Token:-}" in
+  ""|"__CONFIGURE_CLOUDFLARE_TOKEN__")
+    echo "CLOUDFLARE_API_TOKEN/CF_Token obrigatório para ACME DNS-01" >&2
+    exit 64
+    ;;
+esac
 DOMAIN="${ACME_DOMAIN:?ACME_DOMAIN obrigatório}"
 EMAIL="${ACME_EMAIL:?ACME_EMAIL obrigatório}"
 STAGING="${ACME_STAGING:-false}"
