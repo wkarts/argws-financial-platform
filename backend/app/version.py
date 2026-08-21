@@ -11,8 +11,8 @@ def get_app_version() -> str:
 
     Prioridade:
     1. APP_VERSION do ambiente, quando preenchida pelo bootstrap/deploy;
-    2. arquivo VERSION empacotado junto da aplicação;
-    3. arquivo VERSION da raiz do repositório em desenvolvimento;
+    2. primeiro arquivo VERSION encontrado subindo a árvore da aplicação;
+    3. VERSION do diretório de execução;
     4. valor neutro ``dev`` como último fallback.
     """
     env_version = os.getenv("APP_VERSION", "").strip()
@@ -20,14 +20,14 @@ def get_app_version() -> str:
         return env_version
 
     current = Path(__file__).resolve()
-    candidates = (
-        current.parents[2] / "VERSION",  # /app/VERSION no container
-        current.parents[3] / "VERSION",  # raiz do repositório em desenvolvimento
-        Path.cwd() / "VERSION",
-        Path.cwd().parent / "VERSION",
-    )
+    candidates = [parent / "VERSION" for parent in current.parents]
+    candidates.extend((Path.cwd() / "VERSION", Path.cwd().parent / "VERSION"))
 
+    seen: set[Path] = set()
     for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
         try:
             value = candidate.read_text(encoding="utf-8").strip()
         except OSError:
