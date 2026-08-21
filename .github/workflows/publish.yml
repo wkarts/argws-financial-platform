@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - VERSION
+      - .github/workflows/publish.yml
   workflow_dispatch:
 
 permissions:
@@ -98,9 +99,14 @@ jobs:
           echo "Publicado e verificado: $image:latest"
           echo "Alias imutável: $image:${{ needs.prepare.outputs.version }}"
 
-  artifacts:
+  artifacts-and-release:
     runs-on: ubuntu-latest
     needs: [prepare, validate, images]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -120,13 +126,12 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          version="${{ needs.prepare.outputs.version }}"
-          test "$(tr -d '[:space:]' < VERSION)" = "$version"
+          test "$(tr -d '[:space:]' < VERSION)" = "$RELEASE_VERSION"
           python scripts/validate_project.py
           python scripts/package_release.py --output-dir release-artifacts --skip-validation
 
           cat > release-artifacts/CONTAINER_IMAGES.txt <<EOF
-          ARGWS Financial Platform ${version}
+          ARGWS Financial Platform ${RELEASE_VERSION}
 
           Runtime (sempre latest):
           ghcr.io/${{ github.repository_owner }}/argws-financial-api:latest
@@ -136,18 +141,18 @@ jobs:
           ghcr.io/${{ github.repository_owner }}/argws-financial-cloudpanel-agent:latest
 
           Aliases imutáveis da release para auditoria/rollback:
-          ghcr.io/${{ github.repository_owner }}/argws-financial-api:${version}
-          ghcr.io/${{ github.repository_owner }}/argws-financial-web:${version}
-          ghcr.io/${{ github.repository_owner }}/argws-financial-gateway:${version}
-          ghcr.io/${{ github.repository_owner }}/argws-financial-acme:${version}
-          ghcr.io/${{ github.repository_owner }}/argws-financial-cloudpanel-agent:${version}
+          ghcr.io/${{ github.repository_owner }}/argws-financial-api:${RELEASE_VERSION}
+          ghcr.io/${{ github.repository_owner }}/argws-financial-web:${RELEASE_VERSION}
+          ghcr.io/${{ github.repository_owner }}/argws-financial-gateway:${RELEASE_VERSION}
+          ghcr.io/${{ github.repository_owner }}/argws-financial-acme:${RELEASE_VERSION}
+          ghcr.io/${{ github.repository_owner }}/argws-financial-cloudpanel-agent:${RELEASE_VERSION}
           EOF
 
-          test -s release-artifacts/ARGWS-Financial-Platform-v${version}.zip
-          test -s release-artifacts/ARGWS-Financial-Platform-v${version}.tar.zst
-          test -s release-artifacts/ARGWS-Financial-Platform-v${version}.tar.gz
-          test -s release-artifacts/ARGWS-Financial-Platform-v${version}-SHA256SUMS.txt
-          test -s release-artifacts/ARGWS-Financial-Platform-v${version}-PACKAGE_REPORT.json
+          test -s "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}.zip"
+          test -s "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}.tar.zst"
+          test -s "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}.tar.gz"
+          test -s "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}-SHA256SUMS.txt"
+          test -s "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}-PACKAGE_REPORT.json"
       - name: Upload GitHub Actions artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -159,23 +164,106 @@ jobs:
             VALIDATION_REPORT.md
           if-no-files-found: error
           retention-days: 30
-      - name: Create GitHub Release and tag
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.prepare.outputs.tag }}
-          target_commitish: ${{ github.sha }}
-          name: ARGWS Financial Platform ${{ needs.prepare.outputs.tag }}
-          prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
-          make_latest: ${{ needs.prepare.outputs.prerelease == 'false' }}
-          generate_release_notes: true
-          body_path: RELEASE_NOTES.md
-          fail_on_unmatched_files: true
-          files: |
-            release-artifacts/ARGWS-Financial-Platform-v*.zip
-            release-artifacts/ARGWS-Financial-Platform-v*.tar.zst
-            release-artifacts/ARGWS-Financial-Platform-v*.tar.gz
-            release-artifacts/ARGWS-Financial-Platform-v*-SHA256SUMS.txt
-            release-artifacts/ARGWS-Financial-Platform-v*-PACKAGE_REPORT.json
-            release-artifacts/CONTAINER_IMAGES.txt
-            VALIDATION_REPORT.json
-            VALIDATION_REPORT.md
+      - name: Repair version tag when Release is missing
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          # Uma tag sem objeto GitHub Release é estado parcial e pode ser reparada.
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub Release já existe; a tag não será movida."
+            exit 0
+          fi
+
+          git fetch --tags --force
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git rev-parse -q --verify "refs/tags/$RELEASE_TAG" >/dev/null; then
+            current_target="$(git rev-list -n 1 "$RELEASE_TAG")"
+            if [[ "$current_target" != "$GITHUB_SHA" ]]; then
+              echo "Reparando tag órfã $RELEASE_TAG: $current_target -> $GITHUB_SHA"
+              git tag -fa "$RELEASE_TAG" "$GITHUB_SHA" -m "ARGWS Financial Platform $RELEASE_TAG"
+              git push --force origin "refs/tags/$RELEASE_TAG"
+            fi
+          else
+            git tag -a "$RELEASE_TAG" "$GITHUB_SHA" -m "ARGWS Financial Platform $RELEASE_TAG"
+            git push origin "refs/tags/$RELEASE_TAG"
+          fi
+      - name: Create or repair GitHub Release
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          assets=(
+            "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}.zip"
+            "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}.tar.zst"
+            "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}.tar.gz"
+            "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}-SHA256SUMS.txt"
+            "release-artifacts/ARGWS-Financial-Platform-v${RELEASE_VERSION}-PACKAGE_REPORT.json"
+            "release-artifacts/CONTAINER_IMAGES.txt"
+            "VALIDATION_REPORT.json"
+            "VALIDATION_REPORT.md"
+          )
+
+          for asset in "${assets[@]}"; do
+            [[ -s "$asset" ]] || {
+              echo "::error::Artefato ausente ou vazio: $asset"
+              exit 1
+            }
+          done
+
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            args=(
+              release create "$RELEASE_TAG"
+              --repo "$GITHUB_REPOSITORY"
+              --verify-tag
+              --title "ARGWS Financial Platform $RELEASE_TAG"
+              --notes-file RELEASE_NOTES.md
+            )
+            if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
+              args+=(--prerelease)
+            else
+              args+=(--latest)
+            fi
+            gh "${args[@]}"
+          fi
+
+          # O upload é separado da criação do Release para que a operação seja idempotente
+          # e possa reparar uma publicação parcial com a mesma VERSION/tag.
+          gh release upload "$RELEASE_TAG" "${assets[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+      - name: Verify GitHub Release and every published asset
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          expected=(
+            "ARGWS-Financial-Platform-v${RELEASE_VERSION}.zip"
+            "ARGWS-Financial-Platform-v${RELEASE_VERSION}.tar.zst"
+            "ARGWS-Financial-Platform-v${RELEASE_VERSION}.tar.gz"
+            "ARGWS-Financial-Platform-v${RELEASE_VERSION}-SHA256SUMS.txt"
+            "ARGWS-Financial-Platform-v${RELEASE_VERSION}-PACKAGE_REPORT.json"
+            "CONTAINER_IMAGES.txt"
+            "VALIDATION_REPORT.json"
+            "VALIDATION_REPORT.md"
+          )
+
+          release_assets="$(gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            --jq '.assets[].name')"
+
+          for name in "${expected[@]}"; do
+            grep -Fxq "$name" <<<"$release_assets" || {
+              echo "::error::Asset não publicado no GitHub Release: $name"
+              exit 1
+            }
+          done
+
+          gh release view "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json name,tagName,isPrerelease,url,assets
+
+          echo "Release $RELEASE_TAG publicada e verificada com ${#expected[@]} assets."
