@@ -23,7 +23,8 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-      - name: Verify release object and assets
+
+      - name: Verify normal/latest Release and assets
         id: verify
         shell: bash
         run: |
@@ -33,10 +34,26 @@ jobs:
 
           release_json="$(gh release view "$tag" \
             --repo "$GITHUB_REPOSITORY" \
-            --json name,tagName,isPrerelease,url,assets)"
+            --json name,tagName,isDraft,isPrerelease,url,assets)"
 
+          is_draft="$(jq -r '.isDraft' <<<"$release_json")"
+          is_prerelease="$(jq -r '.isPrerelease' <<<"$release_json")"
           release_url="$(jq -r '.url' <<<"$release_json")"
           assets="$(jq -r '.assets[].name' <<<"$release_json")"
+          latest_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq '.tag_name')"
+
+          [[ "$is_draft" == "false" ]] || {
+            echo "::error::A publicação $tag está como Draft."
+            exit 1
+          }
+          [[ "$is_prerelease" == "false" ]] || {
+            echo "::error::A publicação $tag está como Pre-release."
+            exit 1
+          }
+          [[ "$latest_tag" == "$tag" ]] || {
+            echo "::error::A Release latest é $latest_tag, esperado $tag."
+            exit 1
+          }
 
           expected=(
             "ARGWS-Financial-Platform-v${version}.zip"
@@ -64,6 +81,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
           printf '%s\n' "$assets" > /tmp/release-assets.txt
+
       - name: Record publication proof in repository
         shell: bash
         env:
@@ -81,6 +99,10 @@ jobs:
             echo "- Versão: \`$VERSION_VALUE\`"
             echo "- Tag: \`$TAG_VALUE\`"
             echo "- Release: $RELEASE_URL"
+            echo "- Tipo: Release normal"
+            echo "- Draft: false"
+            echo "- Pre-release: false"
+            echo "- Latest: true"
             echo "- Assets verificados: $ASSET_COUNT"
             echo "- Workflow de publicação: SUCCESS"
             echo "- Commit publicado: \`${{ github.event.workflow_run.head_sha }}\`"
@@ -101,5 +123,5 @@ jobs:
             exit 0
           fi
 
-          git commit -m "docs(release): registrar publicação verificada de $TAG_VALUE"
+          git commit -m "docs(release): registrar Release normal verificada de $TAG_VALUE"
           git push origin HEAD:main
