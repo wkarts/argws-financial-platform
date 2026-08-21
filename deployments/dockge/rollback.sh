@@ -11,8 +11,16 @@ VERSION="${1:-}"
 VERSION="${VERSION#v}"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || die 'Versão inválida'
 
-export COMPOSE_FILE_PATH="deployments/dockge/compose.yaml"
+cp "$ROOT/deployments/dockge/compose.yaml" "$ROOT/compose.yaml"
+mkdir -p \
+  data-postgres data-redis data-rabbitmq data-minio \
+  data-backups data-runtime data-celery
+chmod 0777 data-postgres data-redis data-rabbitmq data-minio
+chmod 0770 data-backups data-runtime data-celery
+
+export COMPOSE_FILE_PATH="compose.yaml"
 set_env .env APP_PULL_POLICY always
+set_env .env FINANCIAL_DATA_ROOT .
 set_env .env BACKEND_IMAGE "ghcr.io/wkarts/argws-financial-api:$VERSION"
 set_env .env FRONTEND_IMAGE "ghcr.io/wkarts/argws-financial-web:$VERSION"
 set_env .env GATEWAY_IMAGE "ghcr.io/wkarts/argws-financial-gateway:$VERSION"
