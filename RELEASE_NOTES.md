@@ -1,73 +1,71 @@
-# Release Notes — v1.0.0-rc.3
+# Release Notes — v1.0.0-rc.4
 
-Esta release corrige definitivamente o fluxo de versionamento e publicação da ARGWS Financial Platform, mantendo **uma única fonte de verdade para a versão da aplicação** e separando-a da tag operacional das imagens Docker.
+Esta release corrige o empacotamento e a operação da stack **Dockge**, que anteriormente ainda dependia de build local apesar de a plataforma já publicar imagens oficiais no GHCR.
 
-## Versionamento canônico
+## Dockge image-only
 
-- `VERSION` passa a ser a única fonte de verdade da versão da aplicação;
-- `APP_VERSION` é sincronizada automaticamente a partir de `VERSION` durante bootstrap/deploy;
-- `VITE_APP_VERSION` é obtida automaticamente a partir de `VERSION` durante o build Vue/Vite;
-- removida a versão duplicada de `frontend/package.json`;
-- removidas versões fixas do backend, Dockerfiles, Compose e arquivos `.env.example`;
-- os Dockerfiles empacotam `VERSION` para que a aplicação continue conhecendo sua versão real dentro do container.
-
-## Imagens Docker
-
-As stacks de runtime passam a usar sempre:
+A stack `deployments/dockge/compose.yaml` agora utiliza exclusivamente imagens publicadas:
 
 ```text
-BACKEND_IMAGE=ghcr.io/wkarts/argws-financial-api:latest
-FRONTEND_IMAGE=ghcr.io/wkarts/argws-financial-web:latest
-GATEWAY_IMAGE=ghcr.io/wkarts/argws-financial-gateway:latest
-ACME_IMAGE=ghcr.io/wkarts/argws-financial-acme:latest
-CLOUDPANEL_AGENT_IMAGE=ghcr.io/wkarts/argws-financial-cloudpanel-agent:latest
+ghcr.io/wkarts/argws-financial-api:latest
+ghcr.io/wkarts/argws-financial-web:latest
+ghcr.io/wkarts/argws-financial-gateway:latest
 ```
 
-O workflow de publicação também mantém aliases imutáveis com a versão da release para auditoria e rollback, mas **nenhum arquivo operacional depende desses aliases**.
+Não é mais necessário manter na pasta da stack:
+
+- `backend/`;
+- `frontend/`;
+- Dockerfiles;
+- `infrastructure/nginx/`;
+- código-fonte da aplicação.
+
+A pasta operacional pode conter somente `compose.yaml` e `.env`.
+
+## Atualização e rollback
+
+- `deployments/dockge/install.sh` usa `docker compose pull` + `up -d`, sem `--build`;
+- `deployments/dockge/update.sh` volta sempre ao canal operacional `:latest`;
+- `deployments/dockge/rollback.sh <versão>` usa temporariamente os aliases imutáveis daquela release;
+- `deployments/dockge/healthcheck.sh` referencia explicitamente o Compose image-only.
+
+## Versionamento
+
+`VERSION` continua sendo a única fonte canônica da versão da aplicação. O Compose Dockge não injeta `APP_VERSION`, permitindo que o backend leia a versão empacotada dentro da imagem. O frontend recebe sua versão no build da imagem.
+
+As variáveis de imagem operacionais permanecem em `:latest`; tags versionadas são mantidas apenas para auditoria e rollback.
+
+## CloudPanel / Cloudflare
+
+O CloudPanel permanece externo à stack e deve encaminhar o domínio para:
+
+```text
+http://127.0.0.1:GATEWAY_PORT
+```
+
+preservando o cabeçalho `Host`. O mesmo gateway atende domínio principal, Control Plane, API e wildcard dos tenants.
+
+## Validação contra regressão
+
+O validador estrutural agora exige que o Compose Dockge:
+
+- tenha o conjunto esperado de serviços image-only;
+- não contenha `build:`;
+- referencie `GATEWAY_IMAGE`;
+- tenha fallback GHCR `latest` para a API;
+- não sobrescreva `APP_VERSION`.
 
 ## Publicação
 
-O workflow canônico `Publish Release` executa:
+A release publica normalmente:
 
-1. leitura da versão em `VERSION`;
-2. CI completa reutilizável;
-3. build das cinco imagens Docker;
-4. push das imagens para o GHCR com `:latest`, versão e SHA;
-5. verificação das imagens publicadas;
-6. validação e empacotamento da distribuição;
-7. upload dos artefatos no GitHub Actions;
-8. criação da tag Git;
-9. criação do GitHub Release;
-10. upload dos artefatos ZIP, TAR.ZST, TAR.GZ, checksums, inventário e relatórios.
+- imagens GHCR `api`, `web`, `gateway`, `acme` e `cloudpanel-agent`;
+- ZIP, TAR.ZST e TAR.GZ;
+- checksums SHA-256;
+- relatório/inventário do pacote;
+- artefatos do GitHub Actions;
+- GitHub Release normal e Latest.
 
-O workflow antigo e duplicado de release foi removido.
+## Segurança operacional
 
-## Dependabot
-
-- PRs automáticas antigas foram encerradas;
-- atualizações passam a ser agrupadas por ecossistema;
-- somente uma PR automática pode ficar aberta por ecossistema;
-- atualizações major automáticas foram bloqueadas;
-- Tailwind CSS 4 permanece bloqueado até existir uma migração intencional do PostCSS/Tailwind.
-
-## Plataforma
-
-A release mantém o conjunto funcional já entregue:
-
-- Control Plane e Tenant Plane;
-- isolamento PostgreSQL/storage por tenant;
-- múltiplas empresas por tenant;
-- domínios provisionados e personalizados;
-- clientes, serviços, contratos, recorrência e contas a receber;
-- boleto, Pix, Pix Automático, CNAB 240/400 e conciliação;
-- SMTP e Evolution API;
-- NFS-e/recibos e documentos;
-- Outbox, RabbitMQ e Celery;
-- auditoria e segurança;
-- backup/restore local, S3/MinIO, Google Drive e Dropbox;
-- Docker, Dockge, CloudPanel e Portainer;
-- Prometheus/Grafana opcionais.
-
-## Condição da release candidate
-
-A release continua exigindo credenciais e homologações reais para bancos/PSPs, CNAB, NFS-e, SMTP, Evolution API, Cloudflare e destinos externos de backup. Providers Sandbox continuam disponíveis para ambientes sem credenciais reais.
+Credenciais bancárias, Cloudflare, SMTP, Evolution API, MinIO, PostgreSQL e usuários administrativos continuam sendo configuração externa. Segredos de produção não devem ser versionados nem reutilizados após exposição acidental.
