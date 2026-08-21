@@ -1,0 +1,7 @@
+services:
+  financial-api:
+    environment:
+      APP_ENV: staging
+  financial-gateway:
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-8810}:80"

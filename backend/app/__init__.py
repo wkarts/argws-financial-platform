@@ -1,0 +1,3 @@
+"""ARGWS Financial Platform."""
+
+__version__ = "1.0.0-rc.2"

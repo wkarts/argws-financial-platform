@@ -1,0 +1,25 @@
+services:
+  financial-api:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--proxy-headers", "--forwarded-allow-ips", "*"]
+    volumes:
+      - ../../backend:/app
+      - ../../scripts:/workspace/scripts
+  financial-worker-default:
+    volumes:
+      - ../../backend:/app
+      - ../../scripts:/workspace/scripts
+  financial-worker-billing:
+    volumes:
+      - ../../backend:/app
+      - ../../scripts:/workspace/scripts
+  financial-worker-notifications:
+    volumes:
+      - ../../backend:/app
+      - ../../scripts:/workspace/scripts
+  financial-web:
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+  financial-gateway:
+    ports:
+      - "0.0.0.0:${GATEWAY_PORT:-8800}:80"

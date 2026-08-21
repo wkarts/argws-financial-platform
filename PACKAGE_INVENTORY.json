@@ -1,0 +1,44 @@
+{
+  "application": "ARGWS Financial Platform",
+  "version": "1.0.0-rc.2",
+  "generated_at": "2026-08-21T02:07:59.794364+00:00",
+  "file_count": 305,
+  "bytes": 1432494,
+  "groups": {
+    "python": 114,
+    "vue": 57,
+    "typescript": 12,
+    "shell": 23,
+    "yaml": 16,
+    "documentation": 29
+  },
+  "excluded": {
+    "directories": [
+      ".git",
+      ".mypy_cache",
+      ".pytest_cache",
+      ".releases",
+      ".ruff_cache",
+      ".venv",
+      "__pycache__",
+      "coverage",
+      "dist",
+      "financial-data",
+      "htmlcov",
+      "node_modules",
+      "release-artifacts"
+    ],
+    "files": [
+      ".bootstrap-credentials.txt",
+      ".coverage",
+      ".env",
+      "backup-age-identity.txt",
+      "rclone.conf"
+    ],
+    "suffixes": [
+      ".log",
+      ".pyc",
+      ".pyo"
+    ]
+  }
+}

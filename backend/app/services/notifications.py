@@ -1,0 +1,215 @@
+from __future__ import annotations
+
+import json
+import tempfile
+from pathlib import Path
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
+
+from sqlalchemy import or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.config import settings
+from app.core.errors import APIError
+from app.core.idempotency import compact_idempotency_key
+from app.core.secrets import secret_cipher
+from app.core.tenant_context import get_tenant_context
+from app.models.tenant import IntegrationSetting, Notification
+from app.providers.evolution import EvolutionConfig, EvolutionWhatsAppProvider
+from app.providers.smtp import SMTPConfig, SMTPProvider
+from app.providers.storage import S3StorageProvider
+
+
+class NotificationService:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def _integration(self, provider: str, company_id: str | None) -> IntegrationSetting | None:
+        clauses = [IntegrationSetting.provider == provider, IntegrationSetting.is_enabled.is_(True)]
+        if company_id:
+            stmt = (
+                select(IntegrationSetting)
+                .where(*clauses, or_(IntegrationSetting.company_id == company_id, IntegrationSetting.company_id.is_(None)))
+                .order_by(IntegrationSetting.company_id.desc().nullslast())
+            )
+        else:
+            stmt = select(IntegrationSetting).where(*clauses, IntegrationSetting.company_id.is_(None))
+        return (await self.session.execute(stmt)).scalars().first()
+
+    @staticmethod
+    def _secrets(item: IntegrationSetting | None) -> dict[str, str]:
+        if item is None or not item.encrypted_secrets:
+            return {}
+        return json.loads(secret_cipher.decrypt(item.encrypted_secrets))
+
+    async def queue(
+        self,
+        *,
+        channel: str,
+        destination: str,
+        body: str,
+        subject: str | None = None,
+        company_id: str | None = None,
+        customer_id: str | None = None,
+        receivable_id: str | None = None,
+        idempotency_key: str | None = None,
+        attachment_keys: list[str] | None = None,
+        scheduled_at: datetime | None = None,
+        commit: bool = True,
+    ) -> Notification:
+        normalized_channel = channel.strip().upper()
+        if normalized_channel not in {"EMAIL", "WHATSAPP"}:
+            raise APIError("UNSUPPORTED_NOTIFICATION_CHANNEL", "Canal de comunicação não suportado.", 422)
+        normalized_destination = destination.strip()
+        if not normalized_destination:
+            raise APIError("NOTIFICATION_DESTINATION_REQUIRED", "Destino da comunicação é obrigatório.", 422)
+        raw_key = idempotency_key or f"manual:{normalized_channel}:{normalized_destination}:{uuid4()}"
+        key = compact_idempotency_key(raw_key)
+        values = {
+            "company_id": UUID(company_id) if company_id else None,
+            "customer_id": UUID(customer_id) if customer_id else None,
+            "receivable_id": UUID(receivable_id) if receivable_id else None,
+            "channel": normalized_channel,
+            "provider": "SMTP" if normalized_channel == "EMAIL" else "EVOLUTION",
+            "destination": normalized_destination,
+            "subject": subject,
+            "body": body,
+            "attachment_keys": attachment_keys or [],
+            "status": "PENDING",
+            "idempotency_key": key,
+            "scheduled_at": scheduled_at or datetime.now(UTC),
+        }
+        statement = (
+            pg_insert(Notification)
+            .values(**values)
+            .on_conflict_do_nothing(index_elements=[Notification.idempotency_key])
+            .returning(Notification.id)
+        )
+        notification_id = await self.session.scalar(statement)
+        if notification_id is None:
+            notification = await self.session.scalar(
+                select(Notification).where(Notification.idempotency_key == key)
+            )
+            if notification is None:
+                raise RuntimeError("Não foi possível recuperar a notificação idempotente.")
+        else:
+            notification = await self.session.get(Notification, notification_id)
+            if notification is None:
+                raise RuntimeError("Notificação inserida não pôde ser carregada.")
+        if commit:
+            await self.session.commit()
+            await self.session.refresh(notification)
+        return notification
+
+    async def dispatch(self, notification: Notification) -> Notification:
+        if notification.status in {"SENT", "DELIVERED", "READ"}:
+            return notification
+        notification.attempts += 1
+        try:
+            if notification.channel == "EMAIL":
+                item = await self._integration("SMTP", str(notification.company_id) if notification.company_id else None)
+                secrets_data = self._secrets(item)
+                public = item.public_config if item else {}
+                host = str(public.get("host") or settings.smtp_host)
+                if not host:
+                    raise APIError("SMTP_NOT_CONFIGURED", "SMTP não configurado.", 503)
+                provider = SMTPProvider(
+                    SMTPConfig(
+                        host=host,
+                        port=int(public.get("port") or settings.smtp_port),
+                        username=secrets_data.get("username", settings.smtp_username),
+                        password=secrets_data.get("password", settings.smtp_password),
+                        security=str(public.get("security") or settings.smtp_security),
+                        from_email=str(public.get("from_email") or settings.smtp_from_email),
+                        from_name=str(public.get("from_name") or settings.smtp_from_name),
+                        timeout=settings.smtp_timeout_seconds,
+                    )
+                )
+                attachments: list[Path] = []
+                with tempfile.TemporaryDirectory(prefix="financial-notification-") as temp_dir:
+                    if notification.attachment_keys:
+                        context = get_tenant_context()
+                        storage = S3StorageProvider()
+                        for index, key in enumerate(notification.attachment_keys):
+                            filename = Path(key).name or f"anexo-{index + 1}"
+                            target = Path(temp_dir) / filename
+                            target.write_bytes(await storage.get_bytes(context.storage_bucket, key))
+                            attachments.append(target)
+                    external = await provider.send(
+                        to=notification.destination,
+                        subject=notification.subject or settings.app_name,
+                        html=notification.body,
+                        attachments=attachments,
+                    )
+                notification.external_id = external[:180]
+            elif notification.channel == "WHATSAPP":
+                item = await self._integration("EVOLUTION", str(notification.company_id) if notification.company_id else None)
+                secrets_data = self._secrets(item)
+                public = item.public_config if item else {}
+                base_url = str(public.get("base_url") or settings.evolution_base_url)
+                api_key = secrets_data.get("api_key", settings.evolution_api_key)
+                instance = str(public.get("instance") or settings.evolution_instance)
+                if not base_url or not api_key:
+                    raise APIError("EVOLUTION_NOT_CONFIGURED", "Evolution API não configurada.", 503)
+                provider = EvolutionWhatsAppProvider(
+                    EvolutionConfig(
+                        base_url=base_url,
+                        api_key=api_key,
+                        instance=instance,
+                        send_text_path=str(public.get("send_text_path") or settings.evolution_send_text_path),
+                        send_media_path=str(public.get("send_media_path") or settings.evolution_send_media_path),
+                        timeout=settings.evolution_timeout_seconds,
+                    )
+                )
+                result = await provider.send_text(notification.destination, notification.body)
+                notification.external_id = result.external_id
+                if notification.attachment_keys:
+                    context = get_tenant_context()
+                    storage = S3StorageProvider()
+                    for key in notification.attachment_keys:
+                        media_url = await storage.presigned_url(context.storage_bucket, key, expires=1800)
+                        media = await provider.send_media(
+                            notification.destination,
+                            media_url,
+                            caption=notification.subject or "Documento financeiro",
+                            filename=Path(key).name or "documento.pdf",
+                        )
+                        if not notification.external_id and media.external_id:
+                            notification.external_id = media.external_id
+            else:
+                raise APIError("UNSUPPORTED_NOTIFICATION_CHANNEL", "Canal de comunicação não suportado.", 422)
+            notification.status = "SENT"
+            notification.sent_at = datetime.now(UTC)
+            notification.last_error = None
+        except Exception as exc:  # noqa: BLE001 - persistir falha operacional para retry/DLQ
+            notification.status = "FAILED" if notification.attempts >= 4 else "RETRY"
+            notification.failed_at = datetime.now(UTC)
+            notification.last_error = str(exc)[:2000]
+            if notification.status == "RETRY":
+                notification.scheduled_at = datetime.now(UTC) + timedelta(
+                    minutes=min(2 ** notification.attempts, 60)
+                )
+        await self.session.commit()
+        return notification
+
+    async def dispatch_pending(self, limit: int = 100) -> int:
+        processed = 0
+        for _ in range(limit):
+            stmt = (
+                select(Notification)
+                .where(
+                    Notification.status.in_(["PENDING", "RETRY"]),
+                    Notification.scheduled_at <= datetime.now(UTC),
+                )
+                .order_by(Notification.scheduled_at)
+                .with_for_update(skip_locked=True)
+                .limit(1)
+            )
+            item = (await self.session.execute(stmt)).scalar_one_or_none()
+            if item is None:
+                await self.session.rollback()
+                break
+            await self.dispatch(item)
+            processed += 1
+        return processed
