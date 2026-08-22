@@ -1,44 +1,25 @@
-# Release Notes — v1.0.0-rc.10
+# Release Notes — v1.0.0-rc.11
 
-Esta release consolida as correções de compatibilidade do Dockge sobre a infraestrutura restaurada na `rc.9` da **ARGWS Financial Platform**.
+Esta release corrige a etapa de inicialização de domínios da **ARGWS Financial Platform** sem alterar a arquitetura da stack.
 
-## Dockge sem limite de aliases YAML
+## Domain bootstrap não bloqueante
 
-O pacote `ARGWS-Financial-Platform-v1.0.0-rc.10-Dockge.zip` passa a conter um `compose.yaml` renderizado em YAML plano. Anchors, aliases e merge keys usados no fonte canônico são expandidos durante o empacotamento e não chegam ao editor do Dockge.
+O `financial-domain-init` continua tentando reconciliar automaticamente o wildcard `*.finance.argws.com.br` na Cloudflare, porém falhas externas de DNS/API não derrubam mais a plataforma inteira.
 
-Isso elimina o erro:
+Se a Cloudflare estiver temporariamente indisponível, o token não tiver permissão suficiente ou o domínio base ainda não possuir um registro de origem utilizável, o serviço passa a emitir um relatório JSON com `status: DEGRADED`, `blocking: false` e os detalhes do erro, retornando sucesso para liberar PostgreSQL, Redis, RabbitMQ, MinIO, migrações, API e workers.
 
-`Excessive alias count indicates a resource exhaustion attack`
-
-A validação do pacote usa os tokens reais do parser YAML e reabre o ZIP final para confirmar que não restaram aliases estruturais.
-
-## Preflight alinhado ao `.env` do Dockge
-
-O `financial-preflight` do pacote Dockge recebe também `env_file: .env`. Dessa forma, variáveis específicas do perfil CloudPanel/ACME configuradas pelo operador — como `ACME_DOMAIN`, `ACME_EMAIL`, `CLOUDPANEL_SITE_DOMAIN` e `CLOUDPANEL_WILDCARD_DOMAIN` — ficam disponíveis ao preflight sem duplicação manual no Compose.
-
-As variáveis declaradas explicitamente em `environment` continuam tendo precedência sobre `env_file`.
+A validação de configuração continua sendo feita pelo `financial-preflight`; esta alteração não remove a checagem de secrets, Cloudflare, ACME ou CloudPanel.
 
 ## Infraestrutura preservada
 
-A correção não remove recursos da stack:
-
-- 24 serviços permanecem no runtime;
-- PostgreSQL, Redis, RabbitMQ, MinIO, Prometheus e Grafana continuam internos à rede Docker;
-- Prometheus e Grafana permanecem presentes no runtime de produção;
-- ACME e CloudPanel Agent permanecem no perfil `cloudpanel`;
+- nome oficial: `ARGWS Financial Platform`;
+- domínio público: `finance.argws.com.br`;
+- demo: `demo.finance.argws.com.br`;
+- Control Plane: `control.finance.argws.com.br`;
+- API: `api.finance.argws.com.br`;
+- tenants: `*.finance.argws.com.br`;
+- 24 serviços preservados;
+- Prometheus e Grafana continuam internos;
 - somente `financial-gateway` publica porta no host;
-- deployments continuam image-only via GHCR;
-- build local continua isolado em `compose.local-build.yaml` para desenvolvimento/CI.
-
-## Domínios canônicos
-
-- `finance.argws.com.br` — landing pública;
-- `demo.finance.argws.com.br` — demonstração;
-- `control.finance.argws.com.br` — Control Plane;
-- `admin.finance.argws.com.br` — alias administrativo;
-- `api.finance.argws.com.br` — API;
-- `*.finance.argws.com.br` — tenants.
-
-## Segurança e persistência
-
-Apenas o gateway permanece acessível pelo host. Os dados continuam em diretórios `./data-*`, incluindo PostgreSQL, Redis, RabbitMQ, MinIO, Celery, backups, Prometheus, Grafana, monitoramento, ACME, certificados e estado do agente CloudPanel.
+- produção continua image-only via GHCR;
+- Dockge/CloudPanel continuam usando YAML plano, sem anchors/aliases.
