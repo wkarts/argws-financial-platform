@@ -28,7 +28,6 @@ from app.api.routes import (
     tenant_integrations,
     tenant_management,
     tenant_imports,
-    tenant_mutations,
     tenant_operations,
     tenant_pix_automatic,
     tenant_platform_services,
@@ -181,7 +180,6 @@ app.include_router(tenant_finance.router)
 app.include_router(tenant_integrations.router)
 app.include_router(tenant_management.router)
 app.include_router(tenant_imports.router)
-app.include_router(tenant_mutations.router)
 app.include_router(tenant_operations.router)
 app.include_router(tenant_pix_automatic.router)
 app.include_router(tenant_platform_services.router)
