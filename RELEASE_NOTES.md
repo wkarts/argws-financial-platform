@@ -1,36 +1,36 @@
-# Release Notes — v1.0.0-rc.12
+# Release Notes — v1.0.0-rc.13
 
-Esta release corrige o fluxo de provisionamento e a experiência visual da **ARGWS Financial Platform**, preservando a arquitetura image-only e os serviços existentes.
+Esta release corrige ruídos e lacunas observados no runtime real da **ARGWS Financial Platform**, sem alterar a arquitetura, remover serviços ou expor novas portas.
 
-## Provisionamento operacional
+## ACME / Cloudflare
 
-- tenants só entram nas tarefas periódicas quando o domínio primário também está `ACTIVE`, eliminando erros repetitivos de `DOMAIN_NOT_ACTIVE` para ambientes ainda em reconciliação;
-- o domínio provisionado passa a reconciliar o wildcard Cloudflare antes de ser marcado como ativo;
-- falhas de DNS ficam registradas no job e no domínio, em vez de produzir um falso sucesso;
-- o bootstrap recupera automaticamente o tenant demo existente quando ele ficou incompleto em uma execução anterior;
-- ao criar ou reprocessar um tenant, o Control Plane abre diretamente o job correspondente e acompanha o progresso automaticamente;
-- domínios `PROVISIONED` deixam de exibir a ação manual de verificação destinada a domínios `CUSTOM`.
+- o container ACME deixa de herdar `LOG_LEVEL=INFO` como nível interno do `acme.sh`;
+- `ACME_LOG_LEVEL` passa a ser normalizado para valor numérico, com padrão `1`;
+- elimina o erro repetitivo `sh: INFO: out of range` sem modificar o `LOG_LEVEL=INFO` utilizado pela aplicação Python;
+- emissão, instalação e renovação DNS-01 continuam preservadas.
 
-## CloudPanel automático
+## Grafana / Prometheus
 
-O `financial-cloudpanel-agent` passa a criar o Reverse Proxy `finance.argws.com.br` automaticamente via `clpctl site:add:reverse-proxy` quando o VHost ainda não existe, usando o usuário e a senha configurados no `.env` e apontando por padrão para `http://127.0.0.1:18800`.
+- `financial-monitoring-init` passa a criar a árvore completa esperada pelo Grafana 12:
+  - `datasources`;
+  - `dashboards`;
+  - `plugins`;
+  - `alerting`;
+- elimina os erros de provisionamento causados por diretórios inexistentes;
+- o datasource Prometheus existente continua sendo provisionado automaticamente;
+- o suporte ao hostname interno `financial-api`, introduzido na rc.12, permanece ativo e também passa a constar nos `.env.example` de Dockge e CloudPanel.
 
-Depois da criação, o agente mantém a reconciliação do wildcard e a instalação do certificado.
+## Runtime CloudPanel / Dockge
 
-## Prometheus
+- Dockge e CloudPanel continuam byte a byte no mesmo runtime;
+- corrigido um caminho residual inválido `/data-certs` no `financial-storage-init`;
+- a CI agora impede regressão da árvore de provisionamento do Grafana e da normalização do nível de log do ACME;
+- somente `financial-gateway` publica porta no host;
+- PostgreSQL, Redis, RabbitMQ, MinIO, Prometheus e Grafana permanecem restritos à rede Docker da stack.
 
-O hostname interno `financial-api` passa a ser aceito pelo `TrustedHostMiddleware`, permitindo que o Prometheus faça scrape de `/metrics` sem receber HTTP 400.
+## Redis
 
-## Interface e responsividade
-
-- shell administrativo mais compacto;
-- sidebar reduzida e adequada a telas menores;
-- header e espaçamentos reduzidos;
-- botões, inputs, cards e tabelas com densidade melhor;
-- tabelas agora usam rolagem horizontal no mobile, em vez de conteúdo cortado;
-- criação e reprocessamento de tenant exibem progresso real;
-- tela de provisionamento possui atualização automática e drawer de eventos atualizado;
-- landing pública de `finance.argws.com.br` foi redesenhada com escala menor, conteúdo objetivo, CTAs para demo e Control Plane e responsividade dedicada.
+O Redis continua sem porta publicada no host. A autenticação interna não foi alterada nesta release para evitar uma troca coordenada de credenciais/URLs durante a estabilização do ambiente já operacional. Essa alteração deve ser tratada separadamente, com atualização simultânea de `REDIS_URL`, Celery result backend e healthchecks.
 
 ## Topologia preservada
 
@@ -40,6 +40,5 @@ O hostname interno `financial-api` passa a ser aceito pelo `TrustedHostMiddlewar
 - `admin.finance.argws.com.br` — alias administrativo;
 - `api.finance.argws.com.br` — API;
 - `*.finance.argws.com.br` — tenants;
-- Prometheus e Grafana permanecem na stack;
-- somente o gateway publica porta no host;
-- produção continua image-only via GHCR.
+- produção continua image-only via GHCR `:latest`;
+- build local permanece separado do deployment de produção.
