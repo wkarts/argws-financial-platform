@@ -23,6 +23,7 @@ from app.api.routes import (
     tenant_auth,
     tenant_admin,
     tenant_catalog,
+    tenant_downloads,
     tenant_finance,
     tenant_integrations,
     tenant_management,
@@ -178,6 +179,7 @@ app.include_router(control_tenants.router)
 app.include_router(tenant_auth.router)
 app.include_router(tenant_admin.router)
 app.include_router(tenant_catalog.router)
+app.include_router(tenant_downloads.router)
 app.include_router(tenant_finance.router)
 app.include_router(tenant_integrations.router)
 app.include_router(tenant_management.router)
