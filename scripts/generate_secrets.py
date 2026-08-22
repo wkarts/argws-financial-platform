@@ -8,6 +8,7 @@ import stat
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+PLACEHOLDER_PREFIXES = ("CHANGE_ME", "__CONFIGURE_")
 
 
 def token(length: int = 48) -> str:
@@ -55,13 +56,34 @@ def replace(lines: list[str], values: dict[str, str]) -> list[str]:
     return output
 
 
+def needs_generation(value: str, *, force: bool) -> bool:
+    return force or not value or value.startswith(PLACEHOLDER_PREFIXES)
+
+
+def keep_or_generate(current: dict[str, str], key: str, generated: str, *, force: bool) -> str:
+    existing = current.get(key, "")
+    return generated if needs_generation(existing, force=force) else existing
+
+
+def normalize_smtp(current: dict[str, str]) -> str:
+    security = current.get("SMTP_SECURITY", "starttls").strip().lower()
+    port = current.get("SMTP_PORT", "587").strip()
+    if security == "startssl":
+        security = "ssl" if port == "465" else "starttls"
+    if port == "465" and security == "starttls":
+        security = "ssl"
+    if security not in {"none", "starttls", "ssl"}:
+        security = "starttls"
+    return security
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Gera/repara segredos consistentes para ARGWS Financial Platform.")
+    parser = argparse.ArgumentParser(description="Gera/repara segredos consistentes para ARGWS Financeiro.")
     parser.add_argument("--env", type=Path, default=Path(".env"))
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Regenera inclusive credenciais primárias já preenchidas. Não use em stack com dados sem planejar a rotação.",
+        help="Regenera credenciais primárias. Não use em stack com dados sem planejar a rotação.",
     )
     args = parser.parse_args()
     if not args.env.exists():
@@ -70,100 +92,140 @@ def main() -> int:
     lines = load_env(args.env)
     current = parse(lines)
     version = canonical_version()
+    central_mode = "INTERNAL_SERVICES_PASSWORD" in current or "INITIAL_ADMIN_PASSWORD" in current
 
-    generated = {
-        "APP_SECRET_KEY": token(64),
-        "FIELD_ENCRYPTION_KEY": base64.urlsafe_b64encode(secrets.token_bytes(32)).decode(),
-        "POSTGRES_PASSWORD": token(36),
-        "RABBITMQ_PASSWORD": token(36),
-        "MINIO_ROOT_PASSWORD": token(36),
-        "PLATFORM_ADMIN_PASSWORD": token(24),
-        "DEMO_TENANT_ADMIN_PASSWORD": token(24),
-        "DOMAIN_RECONCILIATION_TOKEN": token(48),
-        "EVOLUTION_WEBHOOK_SECRET": token(48),
-        "BANKING_WEBHOOK_SECRET": token(48),
-        "GRAFANA_ADMIN_PASSWORD": token(24),
-        "CLOUDPANEL_SITE_USER_PASSWORD": token(24),
+    values: dict[str, str] = {
+        "APP_SECRET_KEY": keep_or_generate(current, "APP_SECRET_KEY", token(64), force=args.force),
+        "FIELD_ENCRYPTION_KEY": keep_or_generate(
+            current,
+            "FIELD_ENCRYPTION_KEY",
+            base64.urlsafe_b64encode(secrets.token_bytes(32)).decode(),
+            force=args.force,
+        ),
+        "DOMAIN_RECONCILIATION_TOKEN": keep_or_generate(
+            current, "DOMAIN_RECONCILIATION_TOKEN", token(48), force=args.force
+        ),
+        "BANKING_WEBHOOK_SECRET": keep_or_generate(
+            current, "BANKING_WEBHOOK_SECRET", token(48), force=args.force
+        ),
+        "SMTP_SECURITY": normalize_smtp(current),
     }
-    values: dict[str, str] = {}
-    for key, value in generated.items():
-        existing = current.get(key, "")
-        if args.force or not existing or existing.startswith("CHANGE_ME") or existing.startswith("__CONFIGURE_"):
-            values[key] = value
-        else:
-            values[key] = existing
 
-    # VERSION continua sendo a única fonte canônica. Esses campos são apenas
-    # espelhos gerados para ferramentas legadas; os containers publicados leem
-    # a VERSION embutida na imagem.
-    values["APP_VERSION"] = version
-    values["VITE_APP_VERSION"] = version
+    # VERSION é a única fonte canônica. Os exemplos/deploys não recebem cópia
+    # fixa da versão; as imagens publicadas carregam VERSION internamente.
+    if "APP_VERSION" in current:
+        values["APP_VERSION"] = ""
+    if "VITE_APP_VERSION" in current:
+        values["VITE_APP_VERSION"] = ""
 
-    # O container oficial do Postgres cria apenas POSTGRES_USER. Se o usuário
-    # administrativo for o mesmo, a senha necessariamente é a mesma.
-    admin_user = current.get("POSTGRES_ADMIN_USER") or current.get("POSTGRES_USER") or "financial_admin"
-    postgres_user = current.get("POSTGRES_USER") or "financial_admin"
-    if admin_user == postgres_user:
-        values["POSTGRES_ADMIN_PASSWORD"] = values["POSTGRES_PASSWORD"]
-    else:
-        existing_admin_password = current.get("POSTGRES_ADMIN_PASSWORD", "")
-        values["POSTGRES_ADMIN_PASSWORD"] = (
-            token(36)
-            if args.force or not existing_admin_password or existing_admin_password.startswith("CHANGE_ME")
-            else existing_admin_password
+    if "EVOLUTION_WEBHOOK_SECRET" in current:
+        values["EVOLUTION_WEBHOOK_SECRET"] = keep_or_generate(
+            current, "EVOLUTION_WEBHOOK_SECRET", token(48), force=args.force
         )
 
-    # A stack padrão usa MinIO interno. Quando S3_ACCESS_KEY aponta para o root
-    # do MinIO, o segredo S3 deve acompanhar exatamente a credencial do MinIO.
-    minio_user = current.get("MINIO_ROOT_USER") or "financial"
-    values["S3_ACCESS_KEY"] = minio_user
-    values["S3_SECRET_KEY"] = values["MINIO_ROOT_PASSWORD"]
+    if central_mode:
+        # Novo contrato Dockge/CloudPanel: uma credencial interna URL-safe é
+        # injetada pelo Compose em PostgreSQL, RabbitMQ, MinIO e S3. Não criamos
+        # as antigas variáveis duplicadas no arquivo.
+        values["INTERNAL_SERVICES_PASSWORD"] = keep_or_generate(
+            current,
+            "INTERNAL_SERVICES_PASSWORD",
+            token(36),
+            force=args.force,
+        )
+        values["INITIAL_ADMIN_PASSWORD"] = keep_or_generate(
+            current,
+            "INITIAL_ADMIN_PASSWORD",
+            token(24),
+            force=args.force,
+        )
+    else:
+        # Compatibilidade com os exemplos legados/root usados por desenvolvimento
+        # e CI. Relações derivadas permanecem coerentes sem duplicar VERSION.
+        values["POSTGRES_PASSWORD"] = keep_or_generate(
+            current, "POSTGRES_PASSWORD", token(36), force=args.force
+        )
+        values["RABBITMQ_PASSWORD"] = keep_or_generate(
+            current, "RABBITMQ_PASSWORD", token(36), force=args.force
+        )
+        values["MINIO_ROOT_PASSWORD"] = keep_or_generate(
+            current, "MINIO_ROOT_PASSWORD", token(36), force=args.force
+        )
+        values["PLATFORM_ADMIN_PASSWORD"] = keep_or_generate(
+            current, "PLATFORM_ADMIN_PASSWORD", token(24), force=args.force
+        )
+        if "DEMO_TENANT_ADMIN_PASSWORD" in current:
+            values["DEMO_TENANT_ADMIN_PASSWORD"] = keep_or_generate(
+                current, "DEMO_TENANT_ADMIN_PASSWORD", token(24), force=args.force
+            )
+        if "GRAFANA_ADMIN_PASSWORD" in current:
+            values["GRAFANA_ADMIN_PASSWORD"] = keep_or_generate(
+                current, "GRAFANA_ADMIN_PASSWORD", token(24), force=args.force
+            )
+        if "CLOUDPANEL_SITE_USER_PASSWORD" in current:
+            values["CLOUDPANEL_SITE_USER_PASSWORD"] = keep_or_generate(
+                current, "CLOUDPANEL_SITE_USER_PASSWORD", token(24), force=args.force
+            )
 
-    rabbit_user = current.get("RABBITMQ_USER") or "financial"
-    values["RABBITMQ_URL"] = (
-        f"amqp://{rabbit_user}:{values['RABBITMQ_PASSWORD']}@financial-rabbitmq:5672/financial"
-    )
-    values["CELERY_BROKER_URL"] = values["RABBITMQ_URL"]
+        admin_user = current.get("POSTGRES_ADMIN_USER") or current.get("POSTGRES_USER") or "financial_admin"
+        postgres_user = current.get("POSTGRES_USER") or "financial_admin"
+        if admin_user == postgres_user:
+            values["POSTGRES_ADMIN_PASSWORD"] = values["POSTGRES_PASSWORD"]
+        elif "POSTGRES_ADMIN_PASSWORD" in current:
+            values["POSTGRES_ADMIN_PASSWORD"] = keep_or_generate(
+                current, "POSTGRES_ADMIN_PASSWORD", token(36), force=args.force
+            )
 
-    # Corrige a grafia inválida que já apareceu em instalações e alinha porta
-    # SMTPS 465 com o modo ssl. O SMTP pode continuar desabilitado.
-    smtp_security = current.get("SMTP_SECURITY", "starttls").strip().lower()
-    smtp_port = current.get("SMTP_PORT", "587").strip()
-    if smtp_security == "startssl":
-        smtp_security = "ssl" if smtp_port == "465" else "starttls"
-    if smtp_port == "465" and smtp_security == "starttls":
-        smtp_security = "ssl"
-    if smtp_security not in {"none", "starttls", "ssl"}:
-        smtp_security = "starttls"
-    values["SMTP_SECURITY"] = smtp_security
+        minio_user = current.get("MINIO_ROOT_USER") or "financial"
+        values["S3_ACCESS_KEY"] = minio_user
+        values["S3_SECRET_KEY"] = values["MINIO_ROOT_PASSWORD"]
+
+        rabbit_user = current.get("RABBITMQ_USER") or "financial"
+        values["RABBITMQ_URL"] = (
+            f"amqp://{rabbit_user}:{values['RABBITMQ_PASSWORD']}@financial-rabbitmq:5672/financial"
+        )
+        values["CELERY_BROKER_URL"] = values["RABBITMQ_URL"]
 
     final_lines = replace(lines, values)
     args.env.write_text("\n".join(final_lines) + "\n", encoding="utf-8")
     args.env.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
     final_values = parse(final_lines)
+    admin_password = (
+        final_values.get("INITIAL_ADMIN_PASSWORD", "")
+        if central_mode
+        else final_values.get("PLATFORM_ADMIN_PASSWORD", "")
+    )
+    demo_password = final_values.get("DEMO_TENANT_ADMIN_PASSWORD", "")
+    if demo_password == "${INITIAL_ADMIN_PASSWORD}":
+        demo_password = final_values.get("INITIAL_ADMIN_PASSWORD", "")
+
     credentials = args.env.parent / ".bootstrap-credentials.txt"
     credential_lines = [
-        f"ARGWS Financial Platform {version} — credenciais iniciais",
-        f"Control Plane: {final_values.get('PUBLIC_SCHEME','https')}://{final_values.get('CONTROL_PLANE_HOST','control.localhost')}",
+        f"ARGWS Financeiro {version} — credenciais iniciais",
+        f"Administração: {final_values.get('PUBLIC_SCHEME','https')}://{final_values.get('CONTROL_PLANE_HOST','control.localhost')}",
         f"Usuário: {final_values.get('PLATFORM_ADMIN_EMAIL','admin@example.com')}",
-        f"Senha: {values['PLATFORM_ADMIN_PASSWORD']}",
+        f"Senha: {admin_password}",
     ]
     if final_values.get("BOOTSTRAP_DEMO_TENANT", "false").lower() == "true":
-        credential_lines.extend([
+        credential_lines.extend(
+            [
+                "",
+                f"Empresa demo: {final_values.get('PUBLIC_SCHEME','https')}://{final_values.get('DEMO_TENANT_SLUG','demo')}.{final_values.get('TENANT_DOMAIN_ROOT','localhost')}",
+                f"Usuário demo: {final_values.get('DEMO_TENANT_ADMIN_EMAIL','admin.demo@example.com')}",
+                f"Senha demo: {demo_password}",
+            ]
+        )
+    credential_lines.extend(
+        [
             "",
-            f"Tenant demo: {final_values.get('PUBLIC_SCHEME','https')}://{final_values.get('DEMO_TENANT_SLUG','demo')}.{final_values.get('TENANT_DOMAIN_ROOT','localhost')}",
-            f"Usuário demo: {final_values.get('DEMO_TENANT_ADMIN_EMAIL','admin.demo@example.com')}",
-            f"Senha demo: {values['DEMO_TENANT_ADMIN_PASSWORD']}",
-        ])
-    credential_lines.extend([
-        "",
-        "Troque as senhas após o primeiro acesso e guarde este arquivo fora do servidor.",
-    ])
+            "Troque a senha administrativa após o primeiro acesso e guarde este arquivo fora do servidor.",
+        ]
+    )
     credentials.write_text("\n".join(credential_lines) + "\n", encoding="utf-8")
     credentials.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
-    print(f"Versão sincronizada: {version}")
+    print(f"Versão da imagem/repositório: {version}")
     print(f"Segredos e dependências reparados em {args.env}")
     print(f"Credenciais iniciais gravadas em {credentials}")
     print("Execute o preflight antes do deploy: docker compose run --rm financial-preflight")
