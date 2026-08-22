@@ -31,6 +31,7 @@ from app.api.routes import (
     tenant_mutations,
     tenant_operations,
     tenant_pix_automatic,
+    tenant_platform_services,
     public_finance,
     webhooks,
 )
@@ -183,6 +184,7 @@ app.include_router(tenant_imports.router)
 app.include_router(tenant_mutations.router)
 app.include_router(tenant_operations.router)
 app.include_router(tenant_pix_automatic.router)
+app.include_router(tenant_platform_services.router)
 app.include_router(public_finance.router)
 app.include_router(webhooks.router)
 
