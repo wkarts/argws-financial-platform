@@ -1,29 +1,22 @@
-# Release Notes — v1.0.0-rc.14
+# Release Notes — v1.0.0-rc.15
 
-Esta release corrige o último bloqueio observado no bootstrap real da **ARGWS Financial Platform**, sem alterar a topologia da stack nem remover serviços.
+Esta release corrige o estado residual `FAILED / DNS ERROR / SSL PENDING` observado no provisionamento de tenants da **ARGWS Financial Platform** quando o wildcard da plataforma já existe, mas o token usado pelo backend recebe `401/403` ao consultar a API REST da Cloudflare.
 
-## Bootstrap do tenant demo
+## Wildcard compartilhado da plataforma
 
-O `financial-domain-init` já tratava falhas externas da Cloudflare como `DEGRADED`, porém o bootstrap do tenant demo ainda executava uma segunda reconciliação DNS através do `ProvisioningService`. Quando a Cloudflare respondia `403 Forbidden`, essa segunda chamada encerrava `financial-bootstrap` com exit 1 e impedia API, workers, Prometheus e Grafana de iniciarem.
+Em `CLOUDFLARE_PROVISIONING_MODE=wildcard`, o wildcard `*.finance.argws.com.br` é infraestrutura compartilhada da plataforma. O ambiente real já possui o registro wildcard apontando para o servidor e o certificado wildcard é emitido pelo ACME e instalado automaticamente pelo CloudPanel Agent.
 
-A rc.14 corrige especificamente esse caminho:
+A rc.15 ajusta o provider para que:
 
-- erros HTTP originados em `api.cloudflare.com` durante o provisionamento automático do tenant demo deixam de derrubar o container `financial-bootstrap`;
-- erros `CLOUDFLARE_*` continuam sendo tratados como falha externa não bloqueante para o bootstrap;
-- o job de provisionamento e o tenant continuam registrando o erro e permanecem disponíveis para reprocessamento;
-- erros de banco, migrations, MinIO/S3, RabbitMQ ou outros componentes continuam fatais e não são mascarados;
-- o bootstrap informa explicitamente que o tenant demo ficou pendente de reconciliação externa;
-- testes garantem que um `403` da Cloudflare não bloqueie o boot e que erros HTTP de outros serviços continuem sendo propagados.
+- `401/403` da API REST da Cloudflare durante `ensure_managed_wildcard()` não marque o tenant como falho quando o modo ativo é `wildcard`;
+- o provider retorna o wildcard compartilhado como infraestrutura externa da plataforma e permite que o retry conclua o restante do provisionamento;
+- o modo `records` continua estrito: erros HTTP permanecem fatais e não são mascarados;
+- erros diferentes de `401/403` continuam sendo propagados normalmente;
+- foram adicionados testes específicos cobrindo o fallback de wildcard compartilhado e garantindo que o modo `records` não seja relaxado.
 
-## Diagnóstico confirmado no ambiente real
+## Resultado esperado após retry
 
-O log que motivou esta correção mostrava:
-
-- `financial-preflight`: `PASS`;
-- ACME: certificado base + wildcard emitido e instalado com sucesso;
-- CloudPanel Agent: VHost/certificado instalados;
-- PostgreSQL, Redis, RabbitMQ e MinIO operacionais;
-- falha exclusiva em `financial-bootstrap` ao chamar `ensure_managed_wildcard()` e receber `403 Forbidden` da API Cloudflare.
+Ao reprocessar um tenant provisório já coberto por `*.finance.argws.com.br`, o job deve avançar de `DOMAIN 70%` para `BOOTSTRAP`, `VALIDATION` e `COMPLETED`, limpando `last_error` e atualizando o domínio para `ACTIVE` com SSL `ACTIVE` quando `PUBLIC_SCHEME=https`.
 
 ## Topologia preservada
 
