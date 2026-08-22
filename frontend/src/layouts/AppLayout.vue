@@ -147,7 +147,7 @@ onMounted(refreshContext)
       <header class="sticky top-0 z-20 flex h-16 items-center border-b border-slate-200 bg-white/95 px-3 backdrop-blur sm:px-4 lg:px-6">
         <button class="rounded-lg border border-slate-200 p-2 text-slate-600 lg:hidden" aria-label="Abrir menu" @click="app.sidebarOpen = true"><Menu :size="19" /></button>
         <div class="ml-2.5 min-w-0 lg:ml-0">
-          <p class="truncate text-[13px] font-semibold text-slate-900">{{ currentTitle }}</p>
+          <div class="flex min-w-0 items-center gap-2"><p class="truncate text-[13px] font-semibold text-slate-900">{{ currentTitle }}</p><span v-if="!auth.isControlPlane && app.demoMode" class="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700">Demonstração</span></div>
           <p class="truncate text-[11px] text-slate-400">{{ auth.isControlPlane ? 'controle da plataforma' : app.tenant?.hostname || 'ambiente financeiro' }}</p>
         </div>
         <div class="ml-auto flex items-center gap-1.5">
