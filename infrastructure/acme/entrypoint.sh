@@ -14,6 +14,15 @@ DNS_SLEEP="${ACME_DNS_SLEEP:-20}"
 CHECK_INTERVAL="${ACME_CHECK_INTERVAL_SECONDS:-43200}"
 SERVER="letsencrypt"
 
+# acme.sh usa LOG_LEVEL como valor numérico. O .env da plataforma usa
+# LOG_LEVEL=INFO para a aplicação Python; não deixe esse valor textual vazar
+# para o acme.sh, pois ele provoca mensagens como "sh: INFO: out of range".
+ACME_LOG_LEVEL="${ACME_LOG_LEVEL:-1}"
+case "$ACME_LOG_LEVEL" in
+  ''|*[!0-9]*) ACME_LOG_LEVEL=1 ;;
+esac
+export LOG_LEVEL="$ACME_LOG_LEVEL"
+
 if [ "$STAGING" = "true" ] || [ "$STAGING" = "1" ]; then
   SERVER="letsencrypt_test"
 fi
