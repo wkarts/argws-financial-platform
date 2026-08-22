@@ -1,131 +1,60 @@
-# Release Notes — v1.0.0-rc.7
+# Release Notes — v1.0.0-rc.8
 
-Esta release consolida o runtime da ARGWS Financial Platform em um contrato único: **deploy sempre por imagens GHCR, somente uma porta publicada e validação de configuração antes das migrations**.
+Esta release corrige a operação real observada no primeiro deploy público da ARGWS Financeiro e consolida três pontos: **login profissional sem exposição da implementação**, **compatibilidade Celery/RabbitMQ 4** e **wildcard DNS/SSL automático no CloudPanel**.
 
-## Uma única porta publicada
+## Login voltado ao negócio
 
-Somente `financial-gateway` possui `ports:` no runtime:
+A tela de acesso foi redesenhada mantendo a identidade financeira em azul-marinho/verde, com melhor hierarquia visual, responsividade e acessibilidade.
 
-```text
-127.0.0.1:${GATEWAY_PORT}:80
-```
+Foram removidas da interface pública referências como Python, FastAPI, PostgreSQL, Vue, SaaS, multitenancy e detalhes de arquitetura. O usuário passa a encontrar apenas linguagem relacionada à operação financeira, segurança, cobranças, recebimentos e conciliação.
 
-PostgreSQL, Redis, RabbitMQ, MinIO, API, workers e demais serviços continuam acessíveis entre containers pela rede `financial-internal`, sem publicação direta no host.
+A mesma tela diferencia de forma discreta a área financeira e a área administrativa sem expor a implementação da plataforma.
 
-CloudPanel/Nginx/Reverse Proxy deve apontar somente para o gateway.
+## RabbitMQ 4 / Celery
 
-## Todos os deployments são image-only
+Os logs de produção mostraram que autenticação e acesso ao vhost estavam corretos, mas o `pidbox` do Celery tentava declarar `transient_nonexcl_queues`, recurso bloqueado por padrão no RabbitMQ 4.
 
-O `compose.yaml` da raiz passa a ser o runtime canônico e não contém `build:`. O mesmo arquivo é usado como contrato para:
+A configuração do Celery agora mantém `worker_enable_remote_control=False`, eliminando a fila transitória de controle remoto que causava reconexões contínuas e `RestartFreqExceeded`.
 
-- Docker image-only;
-- Dockge;
-- CloudPanel;
-- production;
-- Portainer.
+Também foi ativado `worker_cancel_long_running_tasks_on_connection_loss=True`, coerente com tarefas de ACK tardio.
 
-As imagens da aplicação são fixas em:
+A CI passa a manter os workers ativos durante o smoke test e falha se voltar a aparecer `transient_nonexcl_queues` nos logs.
+
+## CloudPanel: um Reverse Proxy, wildcard automático
+
+No host CloudPanel, a única etapa manual esperada passa a ser criar o Reverse Proxy do domínio principal para:
 
 ```text
-ghcr.io/wkarts/argws-financial-api:latest
-ghcr.io/wkarts/argws-financial-web:latest
-ghcr.io/wkarts/argws-financial-gateway:latest
+http://127.0.0.1:${GATEWAY_PORT}
 ```
 
-com `pull_policy: always`.
+O runtime Dockge/CloudPanel adiciona três componentes sem publicar portas adicionais:
 
-Development e staging também deixam de usar build em seus deployments.
+- `financial-domain-init`: garante `*.TENANT_DOMAIN_ROOT` no Cloudflare em modo DNS-only;
+- `financial-acme`: emite/renova certificado para o domínio base + wildcard via DNS-01;
+- `financial-cloudpanel-agent`: localiza o VHost criado pelo CloudPanel, adiciona o wildcard ao `server_name`, valida `nginx -t` e instala/renova o certificado via `clpctl`.
 
-## Build local isolado
+O agente mantém backup do VHost, revalida o wildcard depois de alterações do CloudPanel e não expõe interface HTTP própria.
 
-O único modelo com `build:` passa a ser:
+Esse modelo cobre `control.`, `api.` e os domínios provisórios das empresas com um único VHost e um único certificado wildcard.
 
-```text
-compose.local-build.yaml
+## `.env.example` simplificado
+
+Os exemplos de Dockge e CloudPanel foram reorganizados para que a primeira instalação exija poucas alterações.
+
+A repetição de credenciais internas foi reduzida para:
+
+```env
+INTERNAL_SERVICES_PASSWORD=...
+INITIAL_ADMIN_PASSWORD=...
 ```
 
-Uso explícito:
+A senha interna é injetada pelo Compose em PostgreSQL, RabbitMQ, MinIO e S3. Chaves criptográficas, tokens Cloudflare e secrets de webhook permanecem independentes.
 
-```bash
-docker compose -f compose.yaml -f compose.local-build.yaml up -d --build
-```
+Variáveis de portas administrativas de RabbitMQ, MinIO, Prometheus e Grafana foram removidas do exemplo CloudPanel/Dockge porque esses serviços não publicam host ports.
 
-Esse override existe somente para desenvolvimento local e CI. `deployments/portainer/stack-build.yaml` fica deliberadamente desabilitado para impedir build acidental em servidor.
+## Segurança de rede preservada
 
-## Preflight antes de migrations
+A regra continua absoluta: somente `financial-gateway` possui `ports:`. PostgreSQL, Redis, RabbitMQ, MinIO, API, workers e componentes de automação permanecem sem publicação direta no host.
 
-Foi adicionado `financial-preflight`, executado com `network_mode: none` antes de inicializar os serviços persistentes e antes de `financial-migrate`.
-
-Ele detecta e relata sem imprimir segredos:
-
-- placeholders de produção (`CHANGE_ME`, etc.);
-- `POSTGRES_ADMIN_USER` igual a `POSTGRES_USER` com senha diferente;
-- senha/configuração RabbitMQ inconsistente;
-- credenciais S3/MinIO incompatíveis no MinIO interno;
-- `SMTP_SECURITY` inválido;
-- SMTP porta 465 sem `ssl`;
-- integrações habilitadas sem configuração mínima.
-
-Isso transforma erros que antes apareciam apenas como `financial-migrate exit 1` em falhas explícitas de configuração antes da migration.
-
-## Reparação de `.env`
-
-`scripts/generate_secrets.py` passa a:
-
-- gerar placeholders ainda não configurados;
-- sincronizar `POSTGRES_ADMIN_PASSWORD` quando o usuário admin é o mesmo usuário PostgreSQL;
-- sincronizar S3 com MinIO interno;
-- regenerar URLs RabbitMQ/Celery a partir da senha efetiva;
-- corrigir `SMTP_SECURITY=startssl` e alinhar porta 465 com `ssl`;
-- preservar segredos reais existentes, a menos que `--force` seja solicitado.
-
-## Persistência e bundle Dockge
-
-Persistência continua dentro da pasta da stack:
-
-```text
-./data-postgres
-./data-redis
-./data-rabbitmq
-./data-minio
-./data-backups
-./data-runtime
-./data-celery
-./secrets
-```
-
-O asset dedicado `ARGWS-Financial-Platform-v1.0.0-rc.7-Dockge.zip` inclui também os arquivos vazios necessários em `secrets/`.
-
-## Logs e auditoria futura
-
-Os containers usam logging Docker com rotação. A arquitetura de auditoria pelo Control Plane foi formalizada sem abrir portas internas e sem entregar o Docker socket bruto à aplicação.
-
-Acesso excepcional a RabbitMQ, MinIO, PostgreSQL ou Redis deve ser temporário via `docker exec`, SSH tunnel, VPN ou agente interno autenticado, e não por portas permanentes.
-
-## CI e proteção contra regressão
-
-A CI passa a validar:
-
-- ausência de `build:` em qualquer deployment;
-- existência do build somente em `compose.local-build.yaml`;
-- somente `financial-gateway` com host port;
-- PostgreSQL/Redis/RabbitMQ/MinIO sem portas publicadas;
-- GHCR `:latest` e `pull_policy: always` no runtime;
-- igualdade dos arquivos de runtime ao Compose canônico;
-- bundle Dockge e preflight;
-- backend, frontend, builds Docker e smoke test.
-
-## Atualização
-
-Para runtime normal:
-
-```bash
-docker compose pull
-docker compose up -d --remove-orphans
-```
-
-Não use `--build` em servidor.
-
-## Segurança
-
-Credenciais expostas em logs, chats ou arquivos compartilhados devem ser rotacionadas antes da publicação em produção. A release não inclui segredos reais.
+Todos os deployments de produção continuam image-only e consomem as imagens GHCR `:latest`. Build local permanece exclusivamente em `compose.local-build.yaml`, para desenvolvimento/CI.
