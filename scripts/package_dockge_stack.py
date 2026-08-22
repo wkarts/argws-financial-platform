@@ -46,9 +46,11 @@ def main() -> int:
         raise SystemExit("Compose Dockge ainda contém build local")
     if "ghcr.io/wkarts/argws-financial-api:latest" not in compose_text:
         raise SystemExit("Compose Dockge não usa API GHCR :latest")
+    if "financial-preflight" not in compose_text:
+        raise SystemExit("Compose Dockge não contém preflight de configuração")
     for folder in (
         "data-postgres", "data-redis", "data-rabbitmq", "data-minio",
-        "data-backups", "data-runtime", "data-celery",
+        "data-backups", "data-runtime", "data-celery", "secrets",
     ):
         if folder not in compose_text:
             raise SystemExit(f"Compose Dockge não referencia {folder}")
@@ -61,10 +63,13 @@ def main() -> int:
         (root / "README.md").write_bytes(readme.read_bytes())
         for folder in (
             "data-postgres", "data-redis", "data-rabbitmq", "data-minio",
-            "data-backups", "data-runtime", "data-celery",
+            "data-backups", "data-runtime", "data-celery", "secrets",
         ):
-            (root / folder).mkdir()
-            (root / folder / ".gitkeep").write_text("", encoding="utf-8")
+            directory = root / folder
+            directory.mkdir()
+            (directory / ".gitkeep").write_text("", encoding="utf-8")
+        (root / "secrets" / "rclone.conf").write_text("", encoding="utf-8")
+        (root / "secrets" / "backup-age-identity.txt").write_text("", encoding="utf-8")
 
         manifest = {
             "application": "ARGWS Financial Platform",
@@ -72,11 +77,13 @@ def main() -> int:
             "deployment": "dockge",
             "mode": "image-only",
             "runtime_images": "latest",
+            "published_ports": ["financial-gateway"],
             "data_root": ".",
             "persistent_directories": [
                 "data-postgres", "data-redis", "data-rabbitmq", "data-minio",
                 "data-backups", "data-runtime", "data-celery",
             ],
+            "internal_only_services": ["postgres", "redis", "rabbitmq", "minio"],
         }
         (root / "DOCKGE_PACKAGE.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -97,6 +104,8 @@ def main() -> int:
             "argws-financial-platform/.env.example",
             "argws-financial-platform/README.md",
             "argws-financial-platform/DOCKGE_PACKAGE.json",
+            "argws-financial-platform/secrets/rclone.conf",
+            "argws-financial-platform/secrets/backup-age-identity.txt",
         }
         missing = expected - names
         if missing:
