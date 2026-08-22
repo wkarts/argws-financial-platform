@@ -1,9 +1,10 @@
 name: ${COMPOSE_PROJECT_NAME:-argws-financial-platform}
 
-# ARGWS Financial Platform — Dockge / produção por imagens.
+# ARGWS Financial Platform — Dockge / CloudPanel / produção por imagens.
 # YAML deliberadamente plano: sem anchors, aliases ou merge keys.
 # Apenas financial-gateway publica porta no host.
 # Serviços internos permanecem acessíveis somente pela rede Docker.
+# Build local não é utilizado neste runtime.
 
 services:
   financial-preflight:
@@ -94,13 +95,12 @@ services:
       - -ec
       - |
           mkdir -p /data/postgres /data/redis /data/rabbitmq /data/minio \
-            /data/backups /data/runtime /data/celery /data/prometheus \
+            /data/backups /data/runtime /data/celery /data-prometheus \
             /data/grafana /data/monitoring /data/acme /data/certs \
             /data/cloudpanel-agent /secrets
           touch /secrets/rclone.conf /secrets/backup-age-identity.txt
-          chmod 0777 /data/postgres /data/redis /data/rabbitmq /data/minio /data/prometheus /data/grafana
+          chmod 0777 /data/postgres /data/redis /data/rabbitmq /data/minio /data-prometheus /data/grafana
           chmod 0770 /data/backups /data/runtime /data/celery /data/monitoring
-          chmod 0750 /data/acme /data-certs /data/cloudpanel-agent 2>/dev/null || true
           chmod 0750 /data/acme /data/certs /data/cloudpanel-agent
           chmod 0700 /secrets
           chmod 0600 /secrets/rclone.conf /secrets/backup-age-identity.txt
@@ -123,7 +123,11 @@ services:
       - /bin/sh
       - -ec
       - |
-          mkdir -p /config/grafana/provisioning/datasources
+          mkdir -p \
+            /config/grafana/provisioning/datasources \
+            /config/grafana/provisioning/dashboards \
+            /config/grafana/provisioning/plugins \
+            /config/grafana/provisioning/alerting
           cat >/config/prometheus.yml <<'EOF'
           global:
             scrape_interval: 15s
@@ -446,7 +450,8 @@ services:
     image: ghcr.io/wkarts/argws-financial-api:latest
     pull_policy: always
     restart: unless-stopped
-    env_file: [.env]
+    env_file:
+      - .env
     environment:
       POSTGRES_HOST: financial-postgres
       POSTGRES_PORT: "5432"
@@ -463,22 +468,27 @@ services:
     depends_on:
       financial-api:
         condition: service_healthy
-    networks: [financial-internal]
+    networks:
+      - financial-internal
     volumes:
       - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
       - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
       - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
       - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
-    security_opt: ["no-new-privileges:true"]
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: local
-      options: {max-size: "20m", max-file: "5"}
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-worker-billing:
     image: ghcr.io/wkarts/argws-financial-api:latest
     pull_policy: always
     restart: unless-stopped
-    env_file: [.env]
+    env_file:
+      - .env
     environment:
       POSTGRES_HOST: financial-postgres
       POSTGRES_PORT: "5432"
@@ -493,23 +503,29 @@ services:
       MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.billing,financial.banking,financial.cnab,financial.reconciliation", "--loglevel=INFO", "--concurrency=${CELERY_BILLING_CONCURRENCY:-2}", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
-      financial-api: {condition: service_healthy}
-    networks: [financial-internal]
+      financial-api:
+        condition: service_healthy
+    networks:
+      - financial-internal
     volumes:
       - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
       - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
       - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
       - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
-    security_opt: ["no-new-privileges:true"]
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: local
-      options: {max-size: "20m", max-file: "5"}
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-worker-notifications:
     image: ghcr.io/wkarts/argws-financial-api:latest
     pull_policy: always
     restart: unless-stopped
-    env_file: [.env]
+    env_file:
+      - .env
     environment:
       POSTGRES_HOST: financial-postgres
       POSTGRES_PORT: "5432"
@@ -524,23 +540,29 @@ services:
       MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.notifications,financial.webhooks", "--loglevel=INFO", "--concurrency=${CELERY_NOTIFICATION_CONCURRENCY:-2}", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
-      financial-api: {condition: service_healthy}
-    networks: [financial-internal]
+      financial-api:
+        condition: service_healthy
+    networks:
+      - financial-internal
     volumes:
       - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
       - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
       - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
       - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
-    security_opt: ["no-new-privileges:true"]
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: local
-      options: {max-size: "20m", max-file: "5"}
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-worker-backups:
     image: ghcr.io/wkarts/argws-financial-api:latest
     pull_policy: always
     restart: unless-stopped
-    env_file: [.env]
+    env_file:
+      - .env
     environment:
       POSTGRES_HOST: financial-postgres
       POSTGRES_PORT: "5432"
@@ -555,23 +577,29 @@ services:
       MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.backups,financial.exports", "--loglevel=INFO", "--concurrency=1", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
-      financial-api: {condition: service_healthy}
-    networks: [financial-internal]
+      financial-api:
+        condition: service_healthy
+    networks:
+      - financial-internal
     volumes:
       - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
       - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
       - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
       - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
-    security_opt: ["no-new-privileges:true"]
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: local
-      options: {max-size: "20m", max-file: "5"}
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-beat:
     image: ghcr.io/wkarts/argws-financial-api:latest
     pull_policy: always
     restart: unless-stopped
-    env_file: [.env]
+    env_file:
+      - .env
     environment:
       POSTGRES_HOST: financial-postgres
       POSTGRES_PORT: "5432"
@@ -586,42 +614,54 @@ services:
       MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "beat", "--loglevel=INFO", "--schedule=/var/lib/celery/celerybeat-schedule", "--pidfile=/tmp/celerybeat.pid"]
     depends_on:
-      financial-api: {condition: service_healthy}
-    networks: [financial-internal]
+      financial-api:
+        condition: service_healthy
+    networks:
+      - financial-internal
     volumes:
       - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
       - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
       - ${FINANCIAL_DATA_ROOT:-.}/data-celery:/var/lib/celery
       - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
       - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
-    security_opt: ["no-new-privileges:true"]
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: local
-      options: {max-size: "20m", max-file: "5"}
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-web:
     image: ghcr.io/wkarts/argws-financial-web:latest
     pull_policy: always
     restart: unless-stopped
     depends_on:
-      financial-preflight: {condition: service_completed_successfully}
+      financial-preflight:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
       interval: 15s
       timeout: 5s
       retries: 20
-    networks: [financial-internal]
-    security_opt: ["no-new-privileges:true"]
+    networks:
+      - financial-internal
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: local
-      options: {max-size: "20m", max-file: "5"}
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-prometheus:
     image: prom/prometheus:v3.5.0
     restart: unless-stopped
     depends_on:
-      financial-monitoring-init: {condition: service_completed_successfully}
-      financial-api: {condition: service_healthy}
+      financial-monitoring-init:
+        condition: service_completed_successfully
+      financial-api:
+        condition: service_healthy
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -629,17 +669,22 @@ services:
     volumes:
       - ${FINANCIAL_DATA_ROOT:-.}/data-monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ${FINANCIAL_DATA_ROOT:-.}/data-prometheus:/prometheus
-    networks: [financial-internal]
-    security_opt: ["no-new-privileges:true"]
+    networks:
+      - financial-internal
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: local
-      options: {max-size: "20m", max-file: "5"}
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-grafana:
     image: grafana/grafana:12.1.0
     restart: unless-stopped
     depends_on:
-      financial-prometheus: {condition: service_started}
+      financial-prometheus:
+        condition: service_started
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD obrigatória}
@@ -648,20 +693,27 @@ services:
     volumes:
       - ${FINANCIAL_DATA_ROOT:-.}/data-grafana:/var/lib/grafana
       - ${FINANCIAL_DATA_ROOT:-.}/data-monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
-    networks: [financial-internal]
-    security_opt: ["no-new-privileges:true"]
+    networks:
+      - financial-internal
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: local
-      options: {max-size: "20m", max-file: "5"}
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-acme:
-    profiles: ["cloudpanel"]
+    profiles:
+      - cloudpanel
     image: ghcr.io/wkarts/argws-financial-acme:latest
     pull_policy: always
     restart: unless-stopped
     depends_on:
-      financial-storage-init: {condition: service_completed_successfully}
-    env_file: [.env]
+      financial-storage-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
     environment:
       CF_Token: ${CLOUDFLARE_API_TOKEN:-}
       ACME_DOMAIN: ${ACME_DOMAIN:-finance.argws.com.br}
@@ -672,14 +724,19 @@ services:
     volumes:
       - ${FINANCIAL_DATA_ROOT:-.}/data-acme:/acme.sh
       - ${FINANCIAL_DATA_ROOT:-.}/data-certs:/certs
-    networks: [financial-internal]
-    security_opt: ["no-new-privileges:true"]
+    networks:
+      - financial-internal
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: local
-      options: {max-size: "20m", max-file: "5"}
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-cloudpanel-agent:
-    profiles: ["cloudpanel"]
+    profiles:
+      - cloudpanel
     image: ghcr.io/wkarts/argws-financial-cloudpanel-agent:latest
     pull_policy: always
     restart: unless-stopped
@@ -689,8 +746,10 @@ services:
     network_mode: host
     read_only: true
     depends_on:
-      financial-acme: {condition: service_started}
-    env_file: [.env]
+      financial-acme:
+        condition: service_started
+    env_file:
+      - .env
     environment:
       HOST_ROOT: /host
       CERT_DIR: /certs
@@ -706,15 +765,19 @@ services:
       - /tmp:rw,noexec,nosuid,size=16m
     logging:
       driver: local
-      options: {max-size: "20m", max-file: "5"}
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-gateway:
     image: ghcr.io/wkarts/argws-financial-gateway:latest
     pull_policy: always
     restart: unless-stopped
     depends_on:
-      financial-api: {condition: service_healthy}
-      financial-web: {condition: service_healthy}
+      financial-api:
+        condition: service_healthy
+      financial-web:
+        condition: service_healthy
     environment:
       PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:-finance.argws.com.br}
       CONTROL_PLANE_HOST: ${CONTROL_PLANE_HOST:-control.finance.argws.com.br}
@@ -729,11 +792,15 @@ services:
       interval: 15s
       timeout: 5s
       retries: 20
-    networks: [financial-internal]
-    security_opt: ["no-new-privileges:true"]
+    networks:
+      - financial-internal
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: local
-      options: {max-size: "20m", max-file: "5"}
+      options:
+        max-size: "20m"
+        max-file: "5"
 
 networks:
   financial-internal:
