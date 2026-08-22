@@ -100,7 +100,6 @@ services:
           touch /secrets/rclone.conf /secrets/backup-age-identity.txt
           chmod 0777 /data/postgres /data/redis /data/rabbitmq /data/minio /data/prometheus /data/grafana
           chmod 0770 /data/backups /data/runtime /data/celery /data/monitoring
-          chmod 0750 /data/acme /data-certs /data/cloudpanel-agent 2>/dev/null || true
           chmod 0750 /data/acme /data/certs /data/cloudpanel-agent
           chmod 0700 /secrets
           chmod 0600 /secrets/rclone.conf /secrets/backup-age-identity.txt
@@ -123,7 +122,11 @@ services:
       - /bin/sh
       - -ec
       - |
-          mkdir -p /config/grafana/provisioning/datasources
+          mkdir -p \
+            /config/grafana/provisioning/datasources \
+            /config/grafana/provisioning/dashboards \
+            /config/grafana/provisioning/plugins \
+            /config/grafana/provisioning/alerting
           cat >/config/prometheus.yml <<'EOF'
           global:
             scrape_interval: 15s
