@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from app.core.config import settings
@@ -41,3 +42,47 @@ async def test_managed_wildcard_derives_dns_only_origin(monkeypatch: pytest.Monk
     ]
     assert result.name == "*.financeiro.example.com"
     assert result.proxied is False
+
+
+@pytest.mark.asyncio
+async def test_managed_wildcard_403_is_nonblocking_for_shared_wildcard(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "platform_domain", "finance.argws.com.br")
+    monkeypatch.setattr(settings, "tenant_domain_root", "finance.argws.com.br")
+    monkeypatch.setattr(settings, "cloudflare_tenant_record_target", "proxy.finance.argws.com.br")
+    monkeypatch.setattr(settings, "cloudflare_provisioning_mode", "wildcard")
+
+    provider = CloudflareDNSProvider()
+
+    async def forbidden_list_records(hostname: str, record_type: str | None = None):
+        request = httpx.Request("GET", f"https://api.cloudflare.com/client/v4/zones/test/dns_records?name={hostname}")
+        response = httpx.Response(403, request=request)
+        raise httpx.HTTPStatusError("Forbidden", request=request, response=response)
+
+    monkeypatch.setattr(provider, "list_records", forbidden_list_records)
+
+    result = await provider.ensure_managed_wildcard()
+
+    assert result.record_id == ""
+    assert result.name == "*.finance.argws.com.br"
+    assert result.content == "proxy.finance.argws.com.br"
+    assert result.record_type == "EXTERNAL_WILDCARD"
+
+
+@pytest.mark.asyncio
+async def test_managed_wildcard_403_remains_fatal_outside_wildcard_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "platform_domain", "finance.argws.com.br")
+    monkeypatch.setattr(settings, "tenant_domain_root", "finance.argws.com.br")
+    monkeypatch.setattr(settings, "cloudflare_tenant_record_target", "proxy.finance.argws.com.br")
+    monkeypatch.setattr(settings, "cloudflare_provisioning_mode", "records")
+
+    provider = CloudflareDNSProvider()
+
+    async def forbidden_list_records(hostname: str, record_type: str | None = None):
+        request = httpx.Request("GET", f"https://api.cloudflare.com/client/v4/zones/test/dns_records?name={hostname}")
+        response = httpx.Response(403, request=request)
+        raise httpx.HTTPStatusError("Forbidden", request=request, response=response)
+
+    monkeypatch.setattr(provider, "list_records", forbidden_list_records)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await provider.ensure_managed_wildcard()
