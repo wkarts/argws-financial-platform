@@ -1,45 +1,35 @@
-# Release Notes — v1.0.0-rc.12
+# Release Notes — v1.0.0-rc.13
 
-Esta release corrige o fluxo de provisionamento e a experiência visual da **ARGWS Financial Platform**, preservando a arquitetura image-only e os serviços existentes.
+Esta release corrige de forma localizada os pontos observados no runtime de produção da **ARGWS Financial Platform**, preservando a arquitetura image-only, os nomes públicos e a topologia atual.
 
-## Provisionamento operacional
+## Observabilidade
 
-- tenants só entram nas tarefas periódicas quando o domínio primário também está `ACTIVE`, eliminando erros repetitivos de `DOMAIN_NOT_ACTIVE` para ambientes ainda em reconciliação;
-- o domínio provisionado passa a reconciliar o wildcard Cloudflare antes de ser marcado como ativo;
-- falhas de DNS ficam registradas no job e no domínio, em vez de produzir um falso sucesso;
-- o bootstrap recupera automaticamente o tenant demo existente quando ele ficou incompleto em uma execução anterior;
-- ao criar ou reprocessar um tenant, o Control Plane abre diretamente o job correspondente e acompanha o progresso automaticamente;
-- domínios `PROVISIONED` deixam de exibir a ação manual de verificação destinada a domínios `CUSTOM`.
+- o runtime Dockge/CloudPanel passa a criar explicitamente os diretórios de provisionamento `datasources`, `dashboards`, `plugins` e `alerting` antes de iniciar o Grafana;
+- elimina os erros de diretório inexistente em `/etc/grafana/provisioning/*` sem remover o provisionamento automático do Prometheus;
+- mantém Prometheus e Grafana somente na rede interna da stack, sem novas portas publicadas;
+- republica a imagem da API contendo a aceitação explícita do hostname interno `financial-api`, necessária para o scrape de `/metrics` sem HTTP 400.
 
-## CloudPanel automático
+## ACME / CloudPanel
 
-O `financial-cloudpanel-agent` passa a criar o Reverse Proxy `finance.argws.com.br` automaticamente via `clpctl site:add:reverse-proxy` quando o VHost ainda não existe, usando o usuário e a senha configurados no `.env` e apontando por padrão para `http://127.0.0.1:18800`.
+- o container ACME deixa de herdar `LOG_LEVEL=INFO` da aplicação antes de executar `acme.sh`;
+- elimina o ruído `sh: INFO: out of range` sem alterar `LOG_LEVEL` dos demais componentes;
+- emissão, renovação e instalação do certificado `finance.argws.com.br` + `*.finance.argws.com.br` permanecem preservadas;
+- o `financial-cloudpanel-agent` continua responsável por garantir Reverse Proxy, wildcard e instalação do certificado no host.
 
-Depois da criação, o agente mantém a reconciliação do wildcard e a instalação do certificado.
+## Runtime preservado
 
-## Prometheus
-
-O hostname interno `financial-api` passa a ser aceito pelo `TrustedHostMiddleware`, permitindo que o Prometheus faça scrape de `/metrics` sem receber HTTP 400.
-
-## Interface e responsividade
-
-- shell administrativo mais compacto;
-- sidebar reduzida e adequada a telas menores;
-- header e espaçamentos reduzidos;
-- botões, inputs, cards e tabelas com densidade melhor;
-- tabelas agora usam rolagem horizontal no mobile, em vez de conteúdo cortado;
-- criação e reprocessamento de tenant exibem progresso real;
-- tela de provisionamento possui atualização automática e drawer de eventos atualizado;
-- landing pública de `finance.argws.com.br` foi redesenhada com escala menor, conteúdo objetivo, CTAs para demo e Control Plane e responsividade dedicada.
-
-## Topologia preservada
-
+- `ARGWS Financial Platform` permanece como nome oficial;
 - `finance.argws.com.br` — landing pública;
 - `demo.finance.argws.com.br` — demonstração;
 - `control.finance.argws.com.br` — Control Plane;
 - `admin.finance.argws.com.br` — alias administrativo;
 - `api.finance.argws.com.br` — API;
 - `*.finance.argws.com.br` — tenants;
-- Prometheus e Grafana permanecem na stack;
-- somente o gateway publica porta no host;
-- produção continua image-only via GHCR.
+- somente `financial-gateway` publica porta no host;
+- PostgreSQL, Redis, RabbitMQ, MinIO, Prometheus e Grafana permanecem internos;
+- produção continua exclusivamente por imagens GHCR `:latest`;
+- build local permanece fora dos manifests de produção.
+
+## Nota sobre Redis
+
+O Redis continua sem porta publicada no host e restrito à rede Docker interna, conforme o contrato de segurança da plataforma. O aviso nativo do Redis sobre ausência de autenticação não representa exposição externa neste runtime; autenticação Redis será tratada como endurecimento separado para evitar uma rotação abrupta de credenciais em instalações já persistidas.
