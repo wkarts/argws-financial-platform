@@ -4,9 +4,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import tempfile
 import zipfile
 from pathlib import Path
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 PERSISTENT_DIRS = (
@@ -15,12 +18,59 @@ PERSISTENT_DIRS = (
     "data-cloudpanel-agent",
 )
 
+
+class NoAliasDumper(yaml.SafeDumper):
+    """Dumper deliberadamente sem anchors/aliases para compatibilidade com Dockge."""
+
+    def ignore_aliases(self, data: object) -> bool:  # noqa: ANN001
+        return True
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def render_dockge_compose(source: Path) -> str:
+    """Expande merges/aliases YAML e entrega um Compose plano para o editor do Dockge.
+
+    O Docker Compose aceita anchors normalmente, mas o parser usado pela UI do Dockge
+    possui proteção de maxAliasCount. Com muitos serviços e anchors encadeados, um
+    Compose válido pode ser recusado com `Excessive alias count indicates a resource
+    exhaustion attack`. O artefato Dockge deve, portanto, ser YAML plano.
+    """
+    raw = source.read_text(encoding="utf-8")
+    data = yaml.safe_load(raw)
+    if not isinstance(data, dict) or not isinstance(data.get("services"), dict):
+        raise SystemExit("Compose Dockge inválido ou sem services")
+
+    for key in list(data):
+        if isinstance(key, str) and key.startswith("x-"):
+            data.pop(key, None)
+
+    rendered = yaml.dump(
+        data,
+        Dumper=NoAliasDumper,
+        sort_keys=False,
+        allow_unicode=True,
+        default_flow_style=False,
+        width=100000,
+    )
+    header = (
+        "# ARGWS Financial Platform — Dockge/CloudPanel, produção por imagens.\n"
+        "# Arquivo renderizado sem YAML anchors/aliases para compatibilidade com Dockge.\n"
+        "# Não reintroduza &anchor, *alias ou merge YAML neste artefato.\n\n"
+    )
+    rendered = header + rendered
+
+    alias_token = re.compile(r"(?m)(?:^|[\s\[,])(?:&|\*)[A-Za-z_][A-Za-z0-9_-]*")
+    if alias_token.search(rendered) or re.search(r"(?m)^\s*<<\s*:", rendered):
+        raise SystemExit("Render Dockge ainda contém YAML anchor/alias/merge")
+    return rendered
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Empacota a stack Dockge/CloudPanel image-only pronta para extração.")
@@ -52,10 +102,13 @@ def main() -> int:
     for service in ("financial-preflight", "financial-domain-init", "financial-prometheus", "financial-grafana", "financial-acme", "financial-cloudpanel-agent"):
         if service not in compose_text:
             raise SystemExit(f"Compose Dockge não contém {service}")
+
+    rendered_compose = render_dockge_compose(compose)
+
     with tempfile.TemporaryDirectory(prefix="argws-financial-dockge-") as tmp:
         root = Path(tmp) / "argws-financial-platform"
         root.mkdir(parents=True)
-        (root / "compose.yaml").write_bytes(compose.read_bytes())
+        (root / "compose.yaml").write_text(rendered_compose, encoding="utf-8")
         (root / ".env.example").write_bytes(env_example.read_bytes())
         (root / "README.md").write_bytes(readme.read_bytes())
         for folder in (*PERSISTENT_DIRS, "secrets"):
@@ -77,6 +130,7 @@ def main() -> int:
             "data_root": ".",
             "persistent_directories": list(PERSISTENT_DIRS),
             "internal_only_services": ["postgres", "redis", "rabbitmq", "minio", "prometheus", "grafana"],
+            "yaml_aliases": "expanded-none",
             "automatic_domain_runtime": {"dns": "cloudflare-wildcard", "certificate": "acme-dns01", "cloudpanel": "host-agent-clpctl", "manual_step": "single-reverse-proxy"},
         }
         (root / "DOCKGE_PACKAGE.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -88,8 +142,12 @@ def main() -> int:
         bad = zf.testzip()
         if bad:
             raise SystemExit(f"ZIP Dockge corrompido: {bad}")
-    print(json.dumps({"status": "PASS", "version": version, "archive": str(archive), "sha256": sha256(archive)}, ensure_ascii=False, indent=2))
+        packaged_compose = zf.read("argws-financial-platform/compose.yaml").decode("utf-8")
+        if "&api-env" in packaged_compose or "&app" in packaged_compose or "<<:" in packaged_compose:
+            raise SystemExit("ZIP Dockge contém aliases YAML incompatíveis com o editor")
+    print(json.dumps({"status": "PASS", "version": version, "archive": str(archive), "sha256": sha256(archive), "yaml_aliases": 0}, ensure_ascii=False, indent=2))
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
