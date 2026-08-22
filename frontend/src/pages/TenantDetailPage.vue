@@ -28,7 +28,7 @@ const settingsForm = reactive({
   plan_code: '',
   timezone: 'America/Bahia',
   demo_mode: false,
-  landing_mode: 'PLATFORM',
+  landing_mode: 'DISABLED',
   landing_url: '',
   landing_title: '',
   landing_subtitle: '',
@@ -42,7 +42,7 @@ const settingsForm = reactive({
 
 const features = computed(() => tenant.value?.features || {})
 const demoMode = computed(() => Boolean(features.value.demo_mode))
-const landingMode = computed(() => String(features.value.landing_mode || 'PLATFORM'))
+const landingMode = computed(() => String(features.value.landing_mode || 'DISABLED'))
 const whatsappEnabled = computed(() => features.value.whatsapp_enabled !== false)
 const whatsappBilling = computed(() => String(features.value.whatsapp_billing_mode || 'INCLUDED'))
 const tenantPlanName = computed(() => {
@@ -74,7 +74,7 @@ function openSettings() {
     plan_code: tenant.value.plan_code,
     timezone: tenant.value.timezone,
     demo_mode: Boolean(current.demo_mode),
-    landing_mode: String(current.landing_mode || 'PLATFORM'),
+    landing_mode: String(current.landing_mode || 'DISABLED'),
     landing_url: String(current.landing_url || ''),
     landing_title: String(current.landing_title || tenant.value.name || ''),
     landing_subtitle: String(current.landing_subtitle || ''),
@@ -210,7 +210,7 @@ onMounted(load)
         <h3 class="mb-1 font-semibold text-slate-900">Landing page</h3>
         <p class="mb-4 text-sm text-slate-500">Defina se o domínio utiliza a landing gerenciada pela plataforma, uma página externa ou nenhuma landing.</p>
         <div class="grid gap-4 md:grid-cols-2">
-          <div><label class="label">Modo</label><select v-model="settingsForm.landing_mode" class="select"><option value="PLATFORM">Landing gerenciada pela plataforma</option><option value="EXTERNAL">Associar landing externa</option><option value="DISABLED">Sem landing pública</option></select></div>
+          <div><label class="label">Modo</label><select v-model="settingsForm.landing_mode" class="select"><option value="DISABLED">Sem landing pública</option><option value="PLATFORM">Landing gerenciada pela plataforma</option><option value="EXTERNAL">Associar landing externa</option></select></div>
           <div v-if="settingsForm.landing_mode==='EXTERNAL'"><label class="label">URL da landing externa</label><input v-model="settingsForm.landing_url" type="url" class="input" placeholder="https://www.cliente.com.br" required/></div>
           <template v-if="settingsForm.landing_mode==='PLATFORM'">
             <div><label class="label">Título</label><input v-model="settingsForm.landing_title" class="input"/></div>
