@@ -15,6 +15,8 @@ from app.core.errors import APIError
 from app.core.idempotency import compact_idempotency_key
 from app.core.secrets import secret_cipher
 from app.core.tenant_context import get_tenant_context
+from app.db.platform import PlatformSessionLocal
+from app.models.platform import PlatformIntegration
 from app.models.tenant import IntegrationSetting, Notification
 from app.providers.evolution import EvolutionConfig, EvolutionWhatsAppProvider
 from app.providers.smtp import SMTPConfig, SMTPProvider
@@ -42,6 +44,25 @@ class NotificationService:
         if item is None or not item.encrypted_secrets:
             return {}
         return json.loads(secret_cipher.decrypt(item.encrypted_secrets))
+
+    @staticmethod
+    async def _platform_integration(provider: str) -> tuple[dict, dict[str, str]]:
+        async with PlatformSessionLocal() as platform_session:
+            item = await platform_session.scalar(
+                select(PlatformIntegration).where(
+                    PlatformIntegration.provider == provider,
+                    PlatformIntegration.is_enabled.is_(True),
+                )
+            )
+            if item is None:
+                return {}, {}
+            public = dict(item.public_config or {})
+            secrets_data = (
+                json.loads(secret_cipher.decrypt(item.encrypted_secrets))
+                if item.encrypted_secrets
+                else {}
+            )
+            return public, secrets_data
 
     async def queue(
         self,
@@ -71,7 +92,7 @@ class NotificationService:
             "customer_id": UUID(customer_id) if customer_id else None,
             "receivable_id": UUID(receivable_id) if receivable_id else None,
             "channel": normalized_channel,
-            "provider": "SMTP" if normalized_channel == "EMAIL" else "EVOLUTION",
+            "provider": normalized_channel,
             "destination": normalized_destination,
             "subject": subject,
             "body": body,
@@ -109,11 +130,14 @@ class NotificationService:
         try:
             if notification.channel == "EMAIL":
                 item = await self._integration("SMTP", str(notification.company_id) if notification.company_id else None)
-                secrets_data = self._secrets(item)
-                public = item.public_config if item else {}
+                if item:
+                    public = dict(item.public_config or {})
+                    secrets_data = self._secrets(item)
+                else:
+                    public, secrets_data = await self._platform_integration("SMTP")
                 host = str(public.get("host") or settings.smtp_host)
                 if not host:
-                    raise APIError("SMTP_NOT_CONFIGURED", "SMTP não configurado.", 503)
+                    raise APIError("EMAIL_NOT_CONFIGURED", "Serviço de e-mail da plataforma não está configurado.", 503)
                 provider = SMTPProvider(
                     SMTPConfig(
                         host=host,
@@ -145,13 +169,16 @@ class NotificationService:
                 notification.external_id = external[:180]
             elif notification.channel == "WHATSAPP":
                 item = await self._integration("EVOLUTION", str(notification.company_id) if notification.company_id else None)
-                secrets_data = self._secrets(item)
-                public = item.public_config if item else {}
+                if item:
+                    public = dict(item.public_config or {})
+                    secrets_data = self._secrets(item)
+                else:
+                    public, secrets_data = await self._platform_integration("EVOLUTION")
                 base_url = str(public.get("base_url") or settings.evolution_base_url)
                 api_key = secrets_data.get("api_key", settings.evolution_api_key)
                 instance = str(public.get("instance") or settings.evolution_instance)
                 if not base_url or not api_key:
-                    raise APIError("EVOLUTION_NOT_CONFIGURED", "Evolution API não configurada.", 503)
+                    raise APIError("WHATSAPP_NOT_CONFIGURED", "WhatsApp da plataforma não está configurado.", 503)
                 provider = EvolutionWhatsAppProvider(
                     EvolutionConfig(
                         base_url=base_url,
@@ -169,6 +196,12 @@ class NotificationService:
                     storage = S3StorageProvider()
                     for key in notification.attachment_keys:
                         media_url = await storage.presigned_url(context.storage_bucket, key, expires=1800)
+                        if not media_url:
+                            raise APIError(
+                                "WHATSAPP_MEDIA_ENDPOINT_NOT_CONFIGURED",
+                                "Envio de anexos pelo WhatsApp ainda não está disponível.",
+                                503,
+                            )
                         media = await provider.send_media(
                             notification.destination,
                             media_url,

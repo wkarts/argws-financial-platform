@@ -5,6 +5,7 @@ import LoginPage from '../pages/LoginPage.vue'
 import NotFoundPage from '../pages/NotFoundPage.vue'
 import PlaneDashboardPage from '../pages/PlaneDashboardPage.vue'
 import PublicPaymentPage from '../pages/PublicPaymentPage.vue'
+import TenantLandingPage from '../pages/TenantLandingPage.vue'
 
 // Control Plane
 import TenantsPage from '../pages/TenantsPage.vue'
@@ -96,6 +97,7 @@ const tenantRoutes: RouteRecordRaw[] = [
 
 const routes: RouteRecordRaw[] = [
   { path: '/login', name: 'login', component: LoginPage, meta: { public: true } },
+  { path: '/welcome', name: 'tenant-landing', component: TenantLandingPage, meta: { public: true } },
   { path: '/p/:token', name: 'public-payment', component: PublicPaymentPage, meta: { public: true } },
   {
     path: '/',
@@ -116,8 +118,11 @@ router.beforeEach(to => {
   if (!auth.session) auth.hydrate()
 
   if (!to.meta.public && !auth.authenticated) {
+    if (to.name === 'home' && !auth.isControlPlane) return { name: 'tenant-landing' }
     return { name: 'login', query: { redirect: to.fullPath } }
   }
+  if (to.name === 'tenant-landing' && auth.isControlPlane) return { name: 'login' }
+  if (to.name === 'tenant-landing' && auth.authenticated) return { name: 'home' }
   if (to.name === 'login' && auth.authenticated) return { name: 'home' }
   if (to.meta.plane === 'control' && !auth.isControlPlane) return { name: 'home' }
   if (to.meta.plane === 'tenant' && auth.isControlPlane) return { name: 'home' }

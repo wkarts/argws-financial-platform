@@ -11,6 +11,7 @@ import {
 } from 'lucide-vue-next'
 import { useAuthStore } from '../stores/auth'
 import { useAppStore } from '../stores/app'
+import { roleLabel } from '../utils/labels'
 
 interface MenuItem { to: string; label: string; icon: unknown; badge?: string }
 interface MenuGroup { label: string; items: MenuItem[] }
@@ -74,7 +75,7 @@ const tenantMenu: MenuGroup[] = [
     { to: '/imports', label: 'Importações', icon: UploadCloud }
   ] },
   { label: 'Administração', items: [
-    { to: '/integrations', label: 'Integrações operacionais', icon: Settings },
+    { to: '/integrations', label: 'Integrações', icon: Settings },
     { to: '/developer', label: 'API e webhooks', icon: Code2 },
     { to: '/roles', label: 'Perfis e permissões', icon: UserCog },
     { to: '/users', label: 'Usuários', icon: BriefcaseBusiness },
@@ -121,7 +122,7 @@ onMounted(refreshContext)
         <button class="ml-auto rounded-lg p-2 text-slate-400 hover:bg-slate-800 lg:hidden" aria-label="Fechar menu" @click="app.sidebarOpen = false"><X :size="18" /></button>
       </div>
 
-      <nav class="flex-1 overflow-y-auto p-3">
+      <nav class="scroll-clean flex-1 overflow-y-auto p-3">
         <section v-for="group in groups" :key="group.label" class="mb-4">
           <p class="mb-1.5 px-2.5 text-[9px] font-bold uppercase tracking-[0.16em] text-slate-500">{{ group.label }}</p>
           <div class="space-y-0.5">
@@ -136,7 +137,7 @@ onMounted(refreshContext)
         <div class="mb-2 rounded-lg bg-slate-900 p-2.5">
           <p class="truncate text-[13px] font-semibold">{{ auth.user?.name }}</p>
           <p class="truncate text-[11px] text-slate-400">{{ auth.user?.email }}</p>
-          <p class="mt-1.5 inline-flex rounded-full bg-slate-800 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-300">{{ auth.user?.role }}</p>
+          <p class="mt-1.5 inline-flex rounded-full bg-slate-800 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-300">{{ roleLabel(auth.user?.role) }}</p>
         </div>
         <button class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] text-slate-300 hover:bg-slate-900 hover:text-white" @click="logout"><LogOut :size="17" /> Sair</button>
       </div>
@@ -146,8 +147,8 @@ onMounted(refreshContext)
       <header class="sticky top-0 z-20 flex h-16 items-center border-b border-slate-200 bg-white/95 px-3 backdrop-blur sm:px-4 lg:px-6">
         <button class="rounded-lg border border-slate-200 p-2 text-slate-600 lg:hidden" aria-label="Abrir menu" @click="app.sidebarOpen = true"><Menu :size="19" /></button>
         <div class="ml-2.5 min-w-0 lg:ml-0">
-          <p class="truncate text-[13px] font-semibold text-slate-900">{{ currentTitle }}</p>
-          <p class="truncate text-[11px] text-slate-400">{{ auth.isControlPlane ? 'control plane isolado' : app.tenant?.hostname || 'tenant plane' }}</p>
+          <div class="flex min-w-0 items-center gap-2"><p class="truncate text-[13px] font-semibold text-slate-900">{{ currentTitle }}</p><span v-if="!auth.isControlPlane && app.demoMode" class="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-700">Demonstração</span></div>
+          <p class="truncate text-[11px] text-slate-400">{{ auth.isControlPlane ? 'controle da plataforma' : app.tenant?.hostname || 'ambiente financeiro' }}</p>
         </div>
         <div class="ml-auto flex items-center gap-1.5">
           <button v-if="!auth.isControlPlane" class="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50" title="Atualizar contexto" @click="refreshContext"><RefreshCw :size="17" /></button>
@@ -155,7 +156,7 @@ onMounted(refreshContext)
             <button class="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50" aria-label="Notificações" @click="notificationsOpen = !notificationsOpen"><Bell :size="18" /></button>
             <div v-if="notificationsOpen" class="absolute right-0 mt-2 w-[min(19rem,calc(100vw-1.5rem))] rounded-xl border border-slate-200 bg-white p-3.5 shadow-xl">
               <div class="flex items-center justify-between"><p class="text-sm font-semibold">Central operacional</p><ChevronDown :size="15" class="text-slate-400" /></div>
-              <p class="mt-2 text-[13px] leading-5 text-slate-500">Alertas de cobrança, integrações, filas, domínios e backups aparecem nos respectivos painéis operacionais.</p>
+              <p class="mt-2 text-[13px] leading-5 text-slate-500">Alertas de cobrança, integrações e rotinas financeiras aparecem nos respectivos painéis.</p>
             </div>
           </div>
         </div>

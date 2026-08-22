@@ -86,10 +86,48 @@ api.interceptors.response.use(
   }
 )
 
+interface ValidationErrorItem {
+  loc?: Array<string | number>
+  msg?: string
+}
+
+interface ApiErrorPayload {
+  error?: { message?: string }
+  detail?: string | ValidationErrorItem[]
+}
+
+function validationMessage(detail: ValidationErrorItem[]): string {
+  const messages = detail
+    .map(item => {
+      const field = (item.loc || [])
+        .filter(value => !['body', 'query', 'path'].includes(String(value)))
+        .join('.')
+      const message = String(item.msg || '').trim()
+      if (!message) return ''
+      return field ? `${field}: ${message}` : message
+    })
+    .filter(Boolean)
+  return messages.length ? `Revise os dados informados: ${messages.join(' · ')}` : 'Revise os dados informados.'
+}
+
 export function apiError(error: unknown): string {
   if (axios.isAxiosError(error)) {
-    const data = error.response?.data as { error?: { message?: string } } | undefined
-    return data?.error?.message || error.message || 'Falha na comunicação com o servidor.'
+    const status = error.response?.status
+    const data = error.response?.data as ApiErrorPayload | undefined
+
+    if (data?.error?.message) return data.error.message
+    if (Array.isArray(data?.detail)) return validationMessage(data.detail)
+    if (typeof data?.detail === 'string' && data.detail.trim()) return data.detail.trim()
+
+    if (status && status >= 500) {
+      return 'Não foi possível concluir a operação. Tente novamente e, se persistir, contate o suporte.'
+    }
+    if (status === 403) return 'Você não possui permissão para realizar esta operação.'
+    if (status === 404) return 'O registro solicitado não foi encontrado.'
+    if (status === 409) return 'A operação conflita com o estado atual do cadastro.'
+    if (status === 422) return 'Revise os dados informados e tente novamente.'
+    if (!error.response) return 'Não foi possível comunicar com o servidor. Verifique sua conexão e tente novamente.'
+    return 'Não foi possível concluir a solicitação.'
   }
   return error instanceof Error ? error.message : 'Erro inesperado.'
 }

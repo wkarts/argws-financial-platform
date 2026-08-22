@@ -23,12 +23,15 @@ from app.api.routes import (
     tenant_auth,
     tenant_admin,
     tenant_catalog,
+    tenant_downloads,
     tenant_finance,
     tenant_integrations,
     tenant_management,
     tenant_imports,
     tenant_operations,
     tenant_pix_automatic,
+    tenant_platform_services,
+    tenant_public,
     public_finance,
     webhooks,
 )
@@ -64,8 +67,6 @@ app = FastAPI(
 )
 
 configured_hosts = [f"*{item}" if item.startswith(".") else item for item in settings.trusted_host_list]
-# Prometheus coleta diretamente pelo DNS interno do Compose. Esse hostname não
-# precisa ser exposto ao público, mas precisa passar pelo TrustedHostMiddleware.
 allowed_hosts = sorted(set(configured_hosts) | {"financial-api", "localhost", "127.0.0.1"})
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts or ["*"])
 app.add_middleware(
@@ -91,7 +92,7 @@ async def rate_limit_guard(request: Request, call_next):
         window = int(__import__("time").time()) // rule.window_seconds
         key = f"rate-limit:{scope}:{identity}:{window}"
         allowed, remaining, retry_after = await consume_rate_limit(redis, key=key, rule=rule)
-    except Exception as exc:  # Redis indisponível não derruba operações financeiras
+    except Exception as exc:
         logger.warning("rate_limit_unavailable", error=type(exc).__name__)
         return await call_next(request)
     if not allowed:
@@ -115,9 +116,6 @@ async def rate_limit_guard(request: Request, call_next):
 
 @app.middleware("http")
 async def maintenance_guard(request: Request, call_next):
-    # Liveness/readiness/metrics nunca devem depender do arquivo de manutenção.
-    # Isso evita derrubar o healthcheck caso o volume persistente esteja com
-    # permissão incorreta e mantém observabilidade durante manutenção/restore.
     if request.url.path.startswith(("/health", "/metrics")):
         return await call_next(request)
 
@@ -178,12 +176,15 @@ app.include_router(control_tenants.router)
 app.include_router(tenant_auth.router)
 app.include_router(tenant_admin.router)
 app.include_router(tenant_catalog.router)
+app.include_router(tenant_downloads.router)
 app.include_router(tenant_finance.router)
 app.include_router(tenant_integrations.router)
 app.include_router(tenant_management.router)
 app.include_router(tenant_imports.router)
 app.include_router(tenant_operations.router)
 app.include_router(tenant_pix_automatic.router)
+app.include_router(tenant_platform_services.router)
+app.include_router(tenant_public.router)
 app.include_router(public_finance.router)
 app.include_router(webhooks.router)
 

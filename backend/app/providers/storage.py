@@ -32,6 +32,16 @@ class S3StorageProvider:
             aws_secret_access_key=settings.s3_secret_key,
             use_ssl=settings.s3_use_ssl,
         )
+        self.public_client: BaseClient | None = None
+        if settings.s3_public_endpoint_url:
+            self.public_client = boto3.client(
+                "s3",
+                endpoint_url=settings.s3_public_endpoint_url,
+                region_name=settings.s3_region,
+                aws_access_key_id=settings.s3_access_key,
+                aws_secret_access_key=settings.s3_secret_key,
+                use_ssl=settings.s3_public_endpoint_url.lower().startswith("https://"),
+            )
 
     async def ensure_bucket(self, bucket: str) -> None:
         def action() -> None:
@@ -74,8 +84,16 @@ class S3StorageProvider:
         await asyncio.to_thread(self.client.delete_object, Bucket=bucket, Key=key)
 
     async def presigned_url(self, bucket: str, key: str, expires: int = 900) -> str:
+        """Gera URL somente quando existe endpoint S3 explicitamente público.
+
+        O endpoint interno do Docker nunca deve aparecer em respostas destinadas ao
+        navegador. Downloads autenticados da aplicação devem usar os endpoints proxy
+        da API, como /api/v1/cnab/remittances/{id}/download.
+        """
+        if self.public_client is None:
+            return ""
         return await asyncio.to_thread(
-            self.client.generate_presigned_url,
+            self.public_client.generate_presigned_url,
             "get_object",
             Params={"Bucket": bucket, "Key": key},
             ExpiresIn=expires,
