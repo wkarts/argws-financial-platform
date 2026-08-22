@@ -5,6 +5,7 @@ from celery.schedules import crontab
 
 from app.core.config import settings
 
+
 def parse_cron_expression(value: str) -> crontab:
     """Converte cron UNIX de cinco campos para o scheduler Celery."""
 
@@ -37,6 +38,8 @@ celery_app.conf.update(
     task_reject_on_worker_lost=True,
     worker_prefetch_multiplier=1,
     broker_connection_retry_on_startup=True,
+    worker_enable_remote_control=False,
+    worker_cancel_long_running_tasks_on_connection_loss=True,
     task_always_eager=settings.celery_task_always_eager,
     task_routes={
         "app.tasks.provision_tenant": {"queue": "financial.provisioning"},
