@@ -143,6 +143,7 @@ services:
     command: ["python", "-m", "app.preflight"]
     security_opt: ["no-new-privileges:true"]
     logging: *default-logging
+
   financial-storage-init:
     image: alpine:3.22
     restart: "no"
@@ -170,6 +171,7 @@ services:
           chmod 0700 /secrets
           chmod 0600 /secrets/rclone.conf /secrets/backup-age-identity.txt
     logging: *default-logging
+
   financial-postgres:
     image: ${POSTGRES_IMAGE:-postgres:17-alpine}
     restart: unless-stopped
@@ -191,6 +193,7 @@ services:
       start_period: 20s
     networks: [financial-internal]
     logging: *default-logging
+
   financial-redis:
     image: ${REDIS_IMAGE:-redis:8-alpine}
     restart: unless-stopped
@@ -206,6 +209,7 @@ services:
       retries: 20
     networks: [financial-internal]
     logging: *default-logging
+
   financial-rabbitmq:
     image: ${RABBITMQ_IMAGE:-rabbitmq:4-management-alpine}
     restart: unless-stopped
@@ -226,6 +230,7 @@ services:
       start_period: 30s
     networks: [financial-internal]
     logging: *default-logging
+
   financial-minio:
     image: ${MINIO_IMAGE:-quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z}
     restart: unless-stopped
@@ -246,6 +251,7 @@ services:
       start_period: 20s
     networks: [financial-internal]
     logging: *default-logging
+
   financial-minio-init:
     image: ${MINIO_MC_IMAGE:-quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z}
     restart: "no"
@@ -255,14 +261,16 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-financial}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obrigatória}
       BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-financial-backups}
-    entrypoint: ["/bin/sh", "-ec"]
-    command:
+    entrypoint:
+      - /bin/sh
+      - -ec
       - |
           mc alias set local http://financial-minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
           mc mb --ignore-existing "local/$${BACKUP_S3_BUCKET}"
           mc anonymous set none "local/$${BACKUP_S3_BUCKET}"
     networks: [financial-internal]
     logging: *default-logging
+
   financial-migrate:
     <<: *api-common
     restart: "no"
@@ -270,12 +278,14 @@ services:
     depends_on:
       financial-storage-init: {condition: service_completed_successfully}
       financial-postgres: {condition: service_healthy}
+
   financial-migrate-tenants:
     <<: *api-common
     restart: "no"
     command: ["python", "-m", "app.cli", "migrate-all-tenants"]
     depends_on:
       financial-migrate: {condition: service_completed_successfully}
+
   financial-bootstrap:
     <<: *api-common
     restart: "no"
@@ -285,6 +295,7 @@ services:
       financial-minio-init: {condition: service_completed_successfully}
       financial-redis: {condition: service_healthy}
       financial-rabbitmq: {condition: service_healthy}
+
   financial-api:
     <<: *api-common
     command: ["gunicorn", "app.main:app", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--workers", "${API_WORKERS:-2}", "--timeout", "120", "--graceful-timeout", "30", "--access-logfile", "-"]
@@ -296,26 +307,31 @@ services:
       timeout: 8s
       retries: 20
       start_period: 30s
+
   financial-worker-default:
     <<: *api-common
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.default,financial.provisioning,financial.outbox", "--loglevel=INFO", "--concurrency=${CELERY_DEFAULT_CONCURRENCY:-2}", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
       financial-api: {condition: service_healthy}
+
   financial-worker-billing:
     <<: *api-common
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.billing,financial.banking,financial.cnab,financial.reconciliation", "--loglevel=INFO", "--concurrency=${CELERY_BILLING_CONCURRENCY:-2}", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
       financial-api: {condition: service_healthy}
+
   financial-worker-notifications:
     <<: *api-common
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.notifications,financial.webhooks", "--loglevel=INFO", "--concurrency=${CELERY_NOTIFICATION_CONCURRENCY:-2}", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
       financial-api: {condition: service_healthy}
+
   financial-worker-backups:
     <<: *api-common
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.backups,financial.exports", "--loglevel=INFO", "--concurrency=1", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
       financial-api: {condition: service_healthy}
+
   financial-beat:
     <<: *api-common
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "beat", "--loglevel=INFO", "--schedule=/var/lib/celery/celerybeat-schedule", "--pidfile=/tmp/celerybeat.pid"]
@@ -327,6 +343,7 @@ services:
       - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
     depends_on:
       financial-api: {condition: service_healthy}
+
   financial-web:
     image: ghcr.io/wkarts/argws-financial-web:latest
     pull_policy: always
@@ -341,6 +358,7 @@ services:
     networks: [financial-internal]
     security_opt: ["no-new-privileges:true"]
     logging: *default-logging
+
   financial-gateway:
     image: ghcr.io/wkarts/argws-financial-gateway:latest
     pull_policy: always
