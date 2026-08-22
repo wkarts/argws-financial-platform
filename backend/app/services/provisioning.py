@@ -238,6 +238,43 @@ class ProvisioningService:
             session.add(UserCompany(user_id=user.id, company_id=company.id, is_default=True))
             await session.commit()
 
+    async def _activate_provisioned_domain(self, primary: TenantDomain) -> str:
+        """Reconcilia o DNS gerenciado antes de declarar o domínio operacional."""
+
+        mode = settings.cloudflare_provisioning_mode
+        if settings.cloudflare_enabled:
+            if not self.cloudflare.configured:
+                raise APIError(
+                    "CLOUDFLARE_NOT_CONFIGURED",
+                    "Cloudflare está habilitado, mas token e zone_id não estão configurados.",
+                    503,
+                )
+            if mode == "records":
+                target = settings.cloudflare_tenant_record_target or settings.platform_domain
+                result = await self.cloudflare.upsert_cname(primary.hostname, target)
+                primary.dns_record_id = result.record_id
+                detail = f"CNAME {primary.hostname} -> {target} reconciliado."
+            elif mode == "wildcard":
+                result = await self.cloudflare.ensure_managed_wildcard()
+                detail = f"Wildcard {result.name} -> {result.content} reconciliado."
+            else:
+                raise APIError(
+                    "CLOUDFLARE_MODE_INVALID",
+                    f"Modo de provisionamento Cloudflare não suportado: {mode}",
+                    422,
+                )
+        else:
+            detail = "Cloudflare desabilitado; domínio provisionado depende do wildcard gerenciado pelo operador."
+
+        now = datetime.now(UTC)
+        primary.status = "ACTIVE"
+        primary.dns_verified_at = now
+        primary.last_checked_at = now
+        primary.last_error = None
+        primary.ssl_status = "ACTIVE" if settings.public_scheme == "https" else "NOT_REQUIRED"
+        primary.ssl_issued_at = now if primary.ssl_status == "ACTIVE" else None
+        return detail
+
     async def provision(self, job_id: str) -> None:
         async with PlatformSessionLocal() as session:
             stmt = (
@@ -295,6 +332,7 @@ class ProvisioningService:
                 tenant.database.status = "ACTIVE"
                 tenant.database.migrated_revision = "head"
                 tenant.database.provisioned_at = datetime.now(UTC)
+                tenant.database.last_error = None
                 await session.commit()
 
                 await self._save_step(session, job, "STORAGE", 55, "Criando namespace S3/MinIO isolado.")
@@ -303,18 +341,13 @@ class ProvisioningService:
                 await self.storage.ensure_bucket(tenant.storage.bucket)
                 tenant.storage.status = "ACTIVE"
                 tenant.storage.provisioned_at = datetime.now(UTC)
+                tenant.storage.last_error = None
                 await session.commit()
 
-                await self._save_step(session, job, "DOMAIN", 70, "Ativando domínio provisionado.")
+                await self._save_step(session, job, "DOMAIN", 70, "Reconciliando domínio provisionado e wildcard da plataforma.")
                 primary = next(item for item in tenant.domains if item.is_primary)
-                if settings.cloudflare_provisioning_mode == "records" and self.cloudflare.configured:
-                    target = settings.cloudflare_tenant_record_target or settings.platform_domain
-                    result = await self.cloudflare.upsert_cname(primary.hostname, target)
-                    primary.dns_record_id = result.record_id
-                primary.status = "ACTIVE"
-                primary.dns_verified_at = datetime.now(UTC)
-                primary.ssl_status = "ACTIVE" if settings.public_scheme == "https" else "NOT_REQUIRED"
-                primary.ssl_issued_at = datetime.now(UTC) if primary.ssl_status == "ACTIVE" else None
+                domain_detail = await self._activate_provisioned_domain(primary)
+                job.add_event("DOMAIN", domain_detail)
                 await session.commit()
 
                 await self._save_step(session, job, "BOOTSTRAP", 85, "Criando empresa, administrador e templates iniciais.")
@@ -349,6 +382,11 @@ class ProvisioningService:
                     tenant.database.last_error = job.last_error
                 if tenant.storage:
                     tenant.storage.last_error = job.last_error
+                primary = next((item for item in tenant.domains if item.is_primary), None)
+                if primary and job.current_step == "DOMAIN":
+                    primary.status = "ERROR"
+                    primary.last_checked_at = datetime.now(UTC)
+                    primary.last_error = job.last_error
                 await session.commit()
                 raise
 
