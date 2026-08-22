@@ -34,6 +34,7 @@ class TenantUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=2, max_length=180)
     status: str | None = None
     plan_code: str | None = None
+    timezone: str | None = Field(default=None, min_length=2, max_length=64)
     features: dict[str, Any] | None = None
     limits: dict[str, Any] | None = None
     suspended_reason: str | None = None
