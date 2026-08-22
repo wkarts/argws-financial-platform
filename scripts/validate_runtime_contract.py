@@ -62,6 +62,15 @@ def load(path: Path) -> dict:
     return data
 
 
+def validate_no_yaml_aliases(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    for token in yaml.scan(text):
+        if isinstance(token, (yaml.tokens.AnchorToken, yaml.tokens.AliasToken)):
+            fail(f"anchor/alias YAML proibido em {path.relative_to(ROOT)}")
+        if isinstance(token, yaml.tokens.ScalarToken) and token.value == "<<":
+            fail(f"merge key YAML proibida em {path.relative_to(ROOT)}")
+
+
 def validate_runtime(path: Path) -> None:
     data = load(path)
     if has_build(data):
@@ -105,6 +114,8 @@ def validate_runtime(path: Path) -> None:
             fail(f"{name} deve usar pull_policy=always em {path.relative_to(ROOT)}")
 
     if path in CLOUDPANEL_RUNTIMES:
+        validate_no_yaml_aliases(path)
+
         required = {"financial-domain-init", "financial-acme", "financial-cloudpanel-agent"}
         missing_cloudpanel = sorted(required - set(services))
         if missing_cloudpanel:
@@ -135,6 +146,32 @@ def validate_runtime(path: Path) -> None:
                 fail(f"{token} ausente em {path.relative_to(ROOT)}")
 
 
+def validate_observability_and_acme_regressions() -> None:
+    dockge = load(ROOT / "deployments/dockge/compose.yaml")
+    services = dockge.get("services") or {}
+
+    monitoring = services.get("financial-monitoring-init")
+    if not isinstance(monitoring, dict):
+        fail("financial-monitoring-init ausente no runtime Dockge")
+    monitoring_command = "\n".join(str(item) for item in (monitoring.get("command") or []))
+    for required_dir in (
+        "/config/grafana/provisioning/datasources",
+        "/config/grafana/provisioning/dashboards",
+        "/config/grafana/provisioning/plugins",
+        "/config/grafana/provisioning/alerting",
+    ):
+        if required_dir not in monitoring_command:
+            fail(f"diretório de provisionamento Grafana ausente: {required_dir}")
+
+    api_main = (ROOT / "backend/app/main.py").read_text(encoding="utf-8")
+    if "TrustedHostMiddleware" not in api_main or '"financial-api"' not in api_main:
+        fail("financial-api precisa permanecer permitido no TrustedHostMiddleware para o scrape interno")
+
+    acme_entrypoint = (ROOT / "infrastructure/acme/entrypoint.sh").read_text(encoding="utf-8")
+    if "unset LOG_LEVEL" not in acme_entrypoint:
+        fail("ACME precisa remover LOG_LEVEL da aplicação antes de executar acme.sh")
+
+
 def main() -> int:
     for path in RUNTIMES:
         validate_runtime(path)
@@ -143,6 +180,8 @@ def main() -> int:
     cloudpanel = (ROOT / "deployments/cloudpanel/compose.yaml").read_bytes()
     if dockge != cloudpanel:
         fail("Dockge e CloudPanel precisam compartilhar o mesmo runtime CloudPanel-aware")
+
+    validate_observability_and_acme_regressions()
 
     local = yaml.safe_load((ROOT / "compose.local-build.yaml").read_text(encoding="utf-8"))
     if not has_build(local):
@@ -164,7 +203,10 @@ def main() -> int:
     print("- deployments image-only: OK")
     print("- única porta publicada: financial-gateway")
     print("- serviços internos sem host ports: OK")
-    print("- Dockge/CloudPanel com wildcard ACME automático: OK")
+    print("- Dockge/CloudPanel sem anchors/aliases YAML: OK")
+    print("- Grafana provisioning completo: OK")
+    print("- Prometheus /metrics via financial-api: OK")
+    print("- ACME sem herdar LOG_LEVEL textual: OK")
     print("- build local isolado em compose.local-build.yaml: OK")
     return 0
 
