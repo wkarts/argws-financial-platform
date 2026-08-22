@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { CheckCircle2, Mail, MessageCircle, Plus, Save, ServerCog, Settings2, XCircle } from 'lucide-vue-next'
+import { onMounted, reactive, ref } from 'vue'
+import { CheckCircle2, Mail, MessageCircle, Plus, Save, ServerCog, Settings2 } from 'lucide-vue-next'
 import { api, apiError } from '../api/client'
 import type { ApiResponse, Company } from '../types'
 import PageHeader from '../components/PageHeader.vue'
@@ -34,7 +34,6 @@ const presets: ProviderPreset[] = [
 const integrations=ref<Integration[]>([]),companies=ref<Company[]>([]),services=ref<PlatformServices|null>(null),modal=ref(false),error=ref(''),success=ref(''),selected=ref<ProviderPreset>(presets[0])
 const form=reactive({scope:'TENANT',company_id:'',is_enabled:true,public_config:{} as Record<string,unknown>,secrets:{} as Record<string,string>})
 const companyName=(id?:string|null)=>{if(!id)return'Todas as empresas';const item=companies.value.find(company=>company.id===id);return item?.trade_name||item?.legal_name||'Empresa'}
-const selectedIntegration=computed(()=>integrations.value.find(item=>item.provider===selected.value.provider&&((item.company_id||'')===form.company_id)))
 const billingText=(service?:PlatformService)=>{if(!service?.available)return'Indisponível para esta conta';if(service.billing_mode==='ADDON'&&service.monthly_price)return`Disponível como adicional · R$ ${Number(service.monthly_price).toLocaleString('pt-BR',{minimumFractionDigits:2})}/mês`;if(service.billing_mode==='ADDON')return'Disponível como adicional';return'Incluído na plataforma'}
 const presetFor=(provider:string)=>presets.find(item=>item.provider===provider)||{provider,label:'Integração personalizada',description:'Configuração personalizada.',publicFields:[],secretFields:[]}
 async function load(){error.value='';try{const [items,companyResponse,platformResponse]=await Promise.all([api.get<ApiResponse<Integration[]>>('/v1/integrations'),api.get<ApiResponse<Company[]>>('/v1/companies'),api.get<ApiResponse<PlatformServices>>('/v1/platform-services')]);integrations.value=items.data.data;companies.value=companyResponse.data.data;services.value=platformResponse.data.data}catch(exception){error.value=apiError(exception)}}
