@@ -10,7 +10,12 @@ export const useAuthStore = defineStore('auth', () => {
   const controlHost = String(import.meta.env.VITE_CONTROL_PLANE_HOST || 'control.localhost').toLowerCase()
   const isControlPlane = computed(() => {
     const host = window.location.hostname.toLowerCase()
-    return host === controlHost || host.startsWith('control.') || new URLSearchParams(location.search).get('control') === '1'
+    return (
+      host === controlHost ||
+      host.startsWith('control.') ||
+      host.startsWith('admin.') ||
+      new URLSearchParams(location.search).get('control') === '1'
+    )
   })
   const authenticated = computed(() => Boolean(session.value?.tokens.access_token))
   const user = computed(() => session.value?.user ?? null)
