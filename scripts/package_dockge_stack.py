@@ -44,13 +44,7 @@ def sha256(path: Path) -> str:
 
 
 def assert_alias_free_yaml(text: str) -> None:
-    """Falha somente quando existe sintaxe YAML real de anchor, alias ou merge.
-
-    A validação anterior procurava caracteres ``&``/``*`` com regex no texto
-    completo. Isso também capturava comentários e, portanto, gerava falso
-    positivo no próprio cabeçalho do arquivo. O scanner do PyYAML distingue
-    tokens estruturais de comentários e valores normais.
-    """
+    """Falha somente quando existe sintaxe YAML real de anchor, alias ou merge."""
 
     try:
         tokens = list(yaml.scan(text))
@@ -65,7 +59,7 @@ def assert_alias_free_yaml(text: str) -> None:
 
 
 def render_dockge_compose(source: Path) -> str:
-    """Expande merges/aliases e entrega um Compose plano para a UI do Dockge."""
+    """Expande aliases e entrega um Compose plano e completo para o Dockge."""
 
     raw = source.read_text(encoding="utf-8")
     try:
@@ -76,11 +70,23 @@ def render_dockge_compose(source: Path) -> str:
     if not isinstance(data, dict) or not isinstance(data.get("services"), dict):
         raise SystemExit("Compose Dockge inválido ou sem services")
 
-    # As extensões x-* só existem no arquivo-fonte para deduplicação. Depois que
-    # o PyYAML resolve os merges, elas deixam de ser necessárias no artefato.
+    # As extensões x-* são úteis no fonte, mas não podem permanecer no artefato
+    # consumido pelo editor YAML do Dockge. O safe_load já resolveu os merges.
     for key in list(data):
         if isinstance(key, str) and key.startswith("x-"):
             data.pop(key, None)
+
+    # O preflight precisa auditar o ambiente efetivamente configurado pelo
+    # operador, inclusive as variáveis específicas do perfil CloudPanel/ACME.
+    # No fonte canônico várias variáveis são selecionadas no bloco x-api-env;
+    # no pacote Dockge carregamos também o .env completo. As chaves declaradas
+    # em `environment` continuam tendo precedência, conforme a especificação do
+    # Docker Compose, e as demais (ACME_DOMAIN, ACME_EMAIL, CLOUDPANEL_*) ficam
+    # disponíveis ao validador sem duplicação manual no YAML.
+    preflight = data["services"].get("financial-preflight")
+    if not isinstance(preflight, dict):
+        raise SystemExit("Compose Dockge sem financial-preflight")
+    preflight["env_file"] = [".env"]
 
     rendered = yaml.dump(
         data,
@@ -93,7 +99,7 @@ def render_dockge_compose(source: Path) -> str:
     rendered = (
         "# ARGWS Financial Platform — Dockge/CloudPanel, produção por imagens.\n"
         "# YAML plano, sem recursos de reutilização que excedam limites do parser do Dockge.\n"
-        "# Não altere este artefato para reintroduzir deduplicação YAML.\n\n"
+        "# O financial-preflight lê também o .env completo para validar o perfil CloudPanel/ACME.\n\n"
         + rendered
     )
 
@@ -104,6 +110,11 @@ def render_dockge_compose(source: Path) -> str:
         raise SystemExit("Render Dockge perdeu a seção services")
     if set(parsed["services"]) != set(data["services"]):
         raise SystemExit("Render Dockge alterou a lista de serviços")
+
+    packaged_preflight = parsed["services"].get("financial-preflight") or {}
+    env_files = packaged_preflight.get("env_file") or []
+    if ".env" not in env_files:
+        raise SystemExit("Render Dockge não entrega o .env completo ao financial-preflight")
 
     return rendered
 
@@ -194,6 +205,7 @@ def main() -> int:
                 "grafana",
             ],
             "yaml_aliases": "expanded-none",
+            "preflight_env_source": ".env",
             "automatic_domain_runtime": {
                 "dns": "cloudflare-wildcard",
                 "certificate": "acme-dns01",
@@ -226,6 +238,9 @@ def main() -> int:
         packaged_data = yaml.safe_load(packaged_compose)
         if not isinstance(packaged_data, dict) or not isinstance(packaged_data.get("services"), dict):
             raise SystemExit("ZIP Dockge contém compose.yaml inválido")
+        packaged_preflight = packaged_data["services"].get("financial-preflight") or {}
+        if ".env" not in (packaged_preflight.get("env_file") or []):
+            raise SystemExit("ZIP Dockge perdeu env_file .env do financial-preflight")
 
     print(
         json.dumps(
@@ -236,6 +251,7 @@ def main() -> int:
                 "sha256": sha256(archive),
                 "yaml_aliases": 0,
                 "services": len(packaged_data["services"]),
+                "preflight_env": ".env",
             },
             ensure_ascii=False,
             indent=2,
