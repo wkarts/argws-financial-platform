@@ -1,36 +1,29 @@
-# Release Notes — v1.0.0-rc.13
+# Release Notes — v1.0.0-rc.14
 
-Esta release corrige ruídos e lacunas observados no runtime real da **ARGWS Financial Platform**, sem alterar a arquitetura, remover serviços ou expor novas portas.
+Esta release corrige o último bloqueio observado no bootstrap real da **ARGWS Financial Platform**, sem alterar a topologia da stack nem remover serviços.
 
-## ACME / Cloudflare
+## Bootstrap do tenant demo
 
-- o container ACME deixa de herdar `LOG_LEVEL=INFO` como nível interno do `acme.sh`;
-- `ACME_LOG_LEVEL` passa a ser normalizado para valor numérico, com padrão `1`;
-- elimina o erro repetitivo `sh: INFO: out of range` sem modificar o `LOG_LEVEL=INFO` utilizado pela aplicação Python;
-- emissão, instalação e renovação DNS-01 continuam preservadas.
+O `financial-domain-init` já tratava falhas externas da Cloudflare como `DEGRADED`, porém o bootstrap do tenant demo ainda executava uma segunda reconciliação DNS através do `ProvisioningService`. Quando a Cloudflare respondia `403 Forbidden`, essa segunda chamada encerrava `financial-bootstrap` com exit 1 e impedia API, workers, Prometheus e Grafana de iniciarem.
 
-## Grafana / Prometheus
+A rc.14 corrige especificamente esse caminho:
 
-- `financial-monitoring-init` passa a criar a árvore completa esperada pelo Grafana 12:
-  - `datasources`;
-  - `dashboards`;
-  - `plugins`;
-  - `alerting`;
-- elimina os erros de provisionamento causados por diretórios inexistentes;
-- o datasource Prometheus existente continua sendo provisionado automaticamente;
-- o suporte ao hostname interno `financial-api`, introduzido na rc.12, permanece ativo e também passa a constar nos `.env.example` de Dockge e CloudPanel.
+- erros HTTP originados em `api.cloudflare.com` durante o provisionamento automático do tenant demo deixam de derrubar o container `financial-bootstrap`;
+- erros `CLOUDFLARE_*` continuam sendo tratados como falha externa não bloqueante para o bootstrap;
+- o job de provisionamento e o tenant continuam registrando o erro e permanecem disponíveis para reprocessamento;
+- erros de banco, migrations, MinIO/S3, RabbitMQ ou outros componentes continuam fatais e não são mascarados;
+- o bootstrap informa explicitamente que o tenant demo ficou pendente de reconciliação externa;
+- testes garantem que um `403` da Cloudflare não bloqueie o boot e que erros HTTP de outros serviços continuem sendo propagados.
 
-## Runtime CloudPanel / Dockge
+## Diagnóstico confirmado no ambiente real
 
-- Dockge e CloudPanel continuam byte a byte no mesmo runtime;
-- corrigido um caminho residual inválido `/data-certs` no `financial-storage-init`;
-- a CI agora impede regressão da árvore de provisionamento do Grafana e da normalização do nível de log do ACME;
-- somente `financial-gateway` publica porta no host;
-- PostgreSQL, Redis, RabbitMQ, MinIO, Prometheus e Grafana permanecem restritos à rede Docker da stack.
+O log que motivou esta correção mostrava:
 
-## Redis
-
-O Redis continua sem porta publicada no host. A autenticação interna não foi alterada nesta release para evitar uma troca coordenada de credenciais/URLs durante a estabilização do ambiente já operacional. Essa alteração deve ser tratada separadamente, com atualização simultânea de `REDIS_URL`, Celery result backend e healthchecks.
+- `financial-preflight`: `PASS`;
+- ACME: certificado base + wildcard emitido e instalado com sucesso;
+- CloudPanel Agent: VHost/certificado instalados;
+- PostgreSQL, Redis, RabbitMQ e MinIO operacionais;
+- falha exclusiva em `financial-bootstrap` ao chamar `ensure_managed_wildcard()` e receber `403 Forbidden` da API Cloudflare.
 
 ## Topologia preservada
 
@@ -40,5 +33,6 @@ O Redis continua sem porta publicada no host. A autenticação interna não foi 
 - `admin.finance.argws.com.br` — alias administrativo;
 - `api.finance.argws.com.br` — API;
 - `*.finance.argws.com.br` — tenants;
-- produção continua image-only via GHCR `:latest`;
-- build local permanece separado do deployment de produção.
+- somente `financial-gateway` publica porta no host;
+- PostgreSQL, Redis, RabbitMQ, MinIO, Prometheus e Grafana continuam internos;
+- produção continua image-only via GHCR `:latest`.
