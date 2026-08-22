@@ -17,8 +17,13 @@ interface TenantContextData {
   }
 }
 
+interface PublicSiteData {
+  demo_mode: boolean
+}
+
 export const useAppStore = defineStore('app', () => {
   const tenant = ref<TenantContextData | null>(null)
+  const demoMode = ref(false)
   const sidebarOpen = ref(false)
   const globalLoading = ref(false)
 
@@ -34,7 +39,14 @@ export const useAppStore = defineStore('app', () => {
     } catch {
       tenant.value = null
     }
+
+    try {
+      const siteResponse = await api.get<ApiResponse<PublicSiteData>>('/v1/public/site')
+      demoMode.value = Boolean(siteResponse.data.data.demo_mode)
+    } catch {
+      demoMode.value = false
+    }
   }
 
-  return { tenant, sidebarOpen, globalLoading, loadTenantContext }
+  return { tenant, demoMode, sidebarOpen, globalLoading, loadTenantContext }
 })
