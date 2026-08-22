@@ -5,7 +5,9 @@ import tempfile
 from pathlib import Path
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import ensure_company_access, get_tenant_db, require_permission
@@ -15,7 +17,8 @@ from app.schemas.auth import AuthUser
 from app.schemas.common import SuccessResponse
 from app.services.audit import tenant_audit
 
-router = APIRouter(prefix="/api/v1/imports", tags=["Tenant - Importações"])
+router = APIRouter(prefix="/api/v1/imports", tags=["Importações"])
+logger = structlog.get_logger(__name__)
 MAX_IMPORT_BYTES = 100 * 1024 * 1024
 
 
@@ -67,11 +70,13 @@ async def import_financial_vitor(
     ensure_company_access(user, company_id)
     path = await save_upload(file)
     try:
+        # As PKs do banco usam UUID(as_uuid=True). Passar strings aqui provoca
+        # falha de bind no driver PostgreSQL durante session.get().
         stats = await FinancialVitorImporter().import_into(
             session,
             path,
-            company_id=str(company_id),
-            service_id=str(service_id),
+            company_id=company_id,  # type: ignore[arg-type]
+            service_id=service_id,  # type: ignore[arg-type]
             create_contracts=create_contracts,
             create_receivables=create_receivables,
         )
@@ -88,5 +93,18 @@ async def import_financial_vitor(
     except ValueError as exc:
         await session.rollback()
         raise APIError("IMPORT_FAILED", str(exc), 422) from exc
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        logger.exception(
+            "legacy_import_database_failed",
+            company_id=str(company_id),
+            service_id=str(service_id),
+            error=type(exc).__name__,
+        )
+        raise APIError(
+            "IMPORT_DATABASE_FAILED",
+            "Não foi possível gravar a importação. Revise a empresa e o serviço selecionados e tente novamente.",
+            409,
+        ) from exc
     finally:
         path.unlink(missing_ok=True)
