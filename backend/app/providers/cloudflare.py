@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
@@ -14,6 +15,7 @@ class DNSRecordResult:
     name: str
     content: str
     proxied: bool
+    record_type: str = "CNAME"
 
 
 class CloudflareDNSProvider:
@@ -28,47 +30,149 @@ class CloudflareDNSProvider:
     def configured(self) -> bool:
         return bool(self.enabled and self.zone_id and self.token)
 
-    async def upsert_cname(self, hostname: str, target: str, proxied: bool | None = None) -> DNSRecordResult:
+    @property
+    def headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
+
+    def _require_configured(self) -> None:
         if not self.configured:
             raise APIError("CLOUDFLARE_NOT_CONFIGURED", "Cloudflare não está configurado.", 503)
-        headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
-        proxied_value = settings.cloudflare_proxied if proxied is None else proxied
+
+    async def list_records(self, hostname: str, record_type: str | None = None) -> list[dict[str, Any]]:
+        self._require_configured()
+        params: dict[str, str] = {"name": hostname.lower().strip().rstrip(".")}
+        if record_type:
+            params["type"] = record_type.upper()
         async with httpx.AsyncClient(timeout=30) as client:
-            lookup = await client.get(
+            response = await client.get(
                 f"{self.base_url}/zones/{self.zone_id}/dns_records",
-                headers=headers,
-                params={"type": "CNAME", "name": hostname},
+                headers=self.headers,
+                params=params,
             )
-            lookup.raise_for_status()
-            records = lookup.json().get("result", [])
-            payload = {"type": "CNAME", "name": hostname, "content": target, "proxied": proxied_value, "ttl": 1}
-            if records:
-                record_id = records[0]["id"]
+            response.raise_for_status()
+            result = response.json()
+        if not result.get("success"):
+            raise APIError("CLOUDFLARE_ERROR", "Cloudflare rejeitou a consulta DNS.", 502, result)
+        records = result.get("result", [])
+        return [item for item in records if isinstance(item, dict)]
+
+    async def upsert_record(
+        self,
+        hostname: str,
+        content: str,
+        *,
+        record_type: str = "CNAME",
+        proxied: bool | None = None,
+    ) -> DNSRecordResult:
+        self._require_configured()
+        clean_name = hostname.lower().strip().rstrip(".")
+        clean_content = content.strip().rstrip(".")
+        desired_type = record_type.upper()
+        proxied_value = settings.cloudflare_proxied if proxied is None else proxied
+        existing = await self.list_records(clean_name)
+        same_type = next((item for item in existing if str(item.get("type", "")).upper() == desired_type), None)
+
+        payload = {
+            "type": desired_type,
+            "name": clean_name,
+            "content": clean_content,
+            "proxied": proxied_value,
+            "ttl": 1,
+        }
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            if same_type:
+                record_id = str(same_type["id"])
                 response = await client.put(
                     f"{self.base_url}/zones/{self.zone_id}/dns_records/{record_id}",
-                    headers=headers,
+                    headers=self.headers,
                     json=payload,
                 )
             else:
+                # A/CNAME/AAAA no hostname gerenciado podem bloquear a criação do
+                # tipo desejado. Como o hostname é reservado à plataforma, convergimos
+                # somente esses tipos de endereço e preservamos TXT/MX/outros registros.
+                blockers = [
+                    item
+                    for item in existing
+                    if str(item.get("type", "")).upper() in {"A", "AAAA", "CNAME"}
+                ]
+                for blocker in blockers:
+                    delete_response = await client.delete(
+                        f"{self.base_url}/zones/{self.zone_id}/dns_records/{blocker['id']}",
+                        headers=self.headers,
+                    )
+                    if delete_response.status_code not in {200, 404}:
+                        delete_response.raise_for_status()
                 response = await client.post(
-                    f"{self.base_url}/zones/{self.zone_id}/dns_records", headers=headers, json=payload
+                    f"{self.base_url}/zones/{self.zone_id}/dns_records",
+                    headers=self.headers,
+                    json=payload,
                 )
             response.raise_for_status()
             result = response.json()
-            if not result.get("success"):
-                raise APIError("CLOUDFLARE_ERROR", "Cloudflare rejeitou a configuração DNS.", 502, result)
-            item = result["result"]
-            return DNSRecordResult(
-                record_id=item["id"], name=item["name"], content=item["content"], proxied=item["proxied"]
+
+        if not result.get("success"):
+            raise APIError("CLOUDFLARE_ERROR", "Cloudflare rejeitou a configuração DNS.", 502, result)
+        item = result["result"]
+        return DNSRecordResult(
+            record_id=str(item["id"]),
+            name=str(item["name"]),
+            content=str(item["content"]),
+            proxied=bool(item.get("proxied", False)),
+            record_type=str(item.get("type", desired_type)),
+        )
+
+    async def upsert_cname(self, hostname: str, target: str, proxied: bool | None = None) -> DNSRecordResult:
+        return await self.upsert_record(hostname, target, record_type="CNAME", proxied=proxied)
+
+    async def ensure_managed_wildcard(self) -> DNSRecordResult:
+        """Garante origem DNS-only e wildcard usados pelos domínios internos.
+
+        Quando o alvo configurado é diferente do domínio principal (recomendado:
+        ``proxy.<PLATFORM_DOMAIN>``), o registro de origem é derivado do registro DNS
+        atual do domínio principal via API Cloudflare. Assim não é necessário repetir
+        o IP público no `.env`, e o tráfego do wildcard pode chegar diretamente ao
+        CloudPanel para usar o certificado ACME local.
+        """
+
+        wildcard = f"*.{settings.tenant_domain_root}".lower().strip(".")
+        platform = settings.platform_domain.lower().strip().rstrip(".")
+        target = (settings.cloudflare_tenant_record_target or platform).lower().strip().rstrip(".")
+
+        if target != platform:
+            platform_records = await self.list_records(platform)
+            source = next(
+                (
+                    item
+                    for record_type in ("A", "AAAA", "CNAME")
+                    for item in platform_records
+                    if str(item.get("type", "")).upper() == record_type
+                ),
+                None,
             )
+            if source is None:
+                raise APIError(
+                    "CLOUDFLARE_ORIGIN_NOT_FOUND",
+                    "Não foi possível derivar a origem DNS do domínio principal para criar o wildcard.",
+                    409,
+                    {"hostname": platform},
+                )
+            await self.upsert_record(
+                target,
+                str(source.get("content", "")),
+                record_type=str(source.get("type", "A")),
+                proxied=False,
+            )
+
+        return await self.upsert_cname(wildcard, target, proxied=False)
 
     async def delete_record(self, record_id: str) -> None:
         if not self.configured or not record_id:
             return
-        headers = {"Authorization": f"Bearer {self.token}"}
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.delete(
-                f"{self.base_url}/zones/{self.zone_id}/dns_records/{record_id}", headers=headers
+                f"{self.base_url}/zones/{self.zone_id}/dns_records/{record_id}", headers=self.headers
             )
             if response.status_code not in {200, 404}:
                 response.raise_for_status()

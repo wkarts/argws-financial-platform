@@ -68,7 +68,7 @@ jobs:
       - run: test -s "/tmp/dockge-package/ARGWS-Financial-Platform-v$(tr -d '[:space:]' < VERSION)-Dockge.zip"
       - run: cp .env.example .env
       - run: python scripts/generate_secrets.py --env .env
-      - run: mkdir -p data-postgres data-redis data-rabbitmq data-minio data-backups data-runtime data-celery secrets && touch secrets/rclone.conf secrets/backup-age-identity.txt
+      - run: mkdir -p data-postgres data-redis data-rabbitmq data-minio data-backups data-runtime data-celery data-acme data-certs data-cloudpanel-agent secrets && touch secrets/rclone.conf secrets/backup-age-identity.txt
       - run: docker compose --env-file .env -f compose.yaml config --quiet
       - run: docker compose --env-file .env -f compose.yaml -f compose.local-build.yaml config --quiet
       - run: docker compose -f deployments/docker/compose.images.yaml --env-file deployments/docker/.env.example config --quiet
@@ -161,6 +161,23 @@ jobs:
           curl -fsS -H 'Host: api.localhost' http://127.0.0.1:8800/health/live
           curl -fsS -H 'Host: control.localhost' http://127.0.0.1:8800/ >/dev/null
           curl -fsS -H 'Host: demo.localhost' http://127.0.0.1:8800/ >/dev/null
+      - name: Verify Celery workers stay compatible with RabbitMQ 4
+        run: |
+          sleep 5
+          running="$($COMPOSE ps --status running --services)"
+          for service in financial-worker-default financial-worker-billing financial-worker-notifications financial-worker-backups financial-beat; do
+            grep -Fxq "$service" <<<"$running" || {
+              echo "Worker/beat não permaneceu em execução: $service"
+              $COMPOSE ps
+              exit 1
+            }
+          done
+          logs="$($COMPOSE logs --no-color --tail=300 financial-worker-default financial-worker-billing financial-worker-notifications financial-worker-backups financial-rabbitmq)"
+          if grep -q 'transient_nonexcl_queues' <<<"$logs"; then
+            echo "Celery ainda acionou filas transitórias incompatíveis com RabbitMQ 4"
+            printf '%s\n' "$logs"
+            exit 1
+          fi
       - name: Container status
         run: $COMPOSE ps
       - name: Collect logs on failure

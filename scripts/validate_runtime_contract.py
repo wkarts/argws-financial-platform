@@ -15,6 +15,30 @@ RUNTIMES = [
     ROOT / "deployments/production/compose.yaml",
     ROOT / "deployments/portainer/stack.yaml",
 ]
+CLOUDPANEL_RUNTIMES = {
+    ROOT / "deployments/dockge/compose.yaml",
+    ROOT / "deployments/cloudpanel/compose.yaml",
+}
+CORE_SERVICES = {
+    "financial-preflight",
+    "financial-storage-init",
+    "financial-postgres",
+    "financial-redis",
+    "financial-rabbitmq",
+    "financial-minio",
+    "financial-minio-init",
+    "financial-migrate",
+    "financial-migrate-tenants",
+    "financial-bootstrap",
+    "financial-api",
+    "financial-worker-default",
+    "financial-worker-billing",
+    "financial-worker-notifications",
+    "financial-worker-backups",
+    "financial-beat",
+    "financial-web",
+    "financial-gateway",
+}
 
 
 def fail(message: str) -> None:
@@ -31,50 +55,94 @@ def has_build(value: object) -> bool:
     return False
 
 
-def main() -> int:
-    reference: bytes | None = None
-    for path in RUNTIMES:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            fail(f"YAML inválido: {path.relative_to(ROOT)}")
-        if has_build(data):
-            fail(f"build local encontrado em deployment: {path.relative_to(ROOT)}")
-        services = data.get("services")
-        if not isinstance(services, dict):
-            fail(f"services ausente em {path.relative_to(ROOT)}")
+def load(path: Path) -> dict:
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        fail(f"YAML inválido: {path.relative_to(ROOT)}")
+    return data
 
-        publishers = [name for name, service in services.items() if isinstance(service, dict) and service.get("ports")]
-        if publishers != ["financial-gateway"]:
-            fail(f"{path.relative_to(ROOT)} publica portas em {publishers}; esperado somente financial-gateway")
 
-        for internal in ("financial-postgres", "financial-redis", "financial-rabbitmq", "financial-minio"):
-            service = services.get(internal)
-            if not isinstance(service, dict):
-                fail(f"{internal} ausente em {path.relative_to(ROOT)}")
-            if service.get("ports"):
-                fail(f"{internal} não pode publicar porta no host em {path.relative_to(ROOT)}")
+def validate_runtime(path: Path) -> None:
+    data = load(path)
+    if has_build(data):
+        fail(f"build local encontrado em deployment: {path.relative_to(ROOT)}")
 
-        gateway = services.get("financial-gateway")
-        if not isinstance(gateway, dict) or len(gateway.get("ports") or []) != 1:
-            fail(f"gateway precisa de exatamente um bind em {path.relative_to(ROOT)}")
+    services = data.get("services")
+    if not isinstance(services, dict):
+        fail(f"services ausente em {path.relative_to(ROOT)}")
+
+    missing = sorted(CORE_SERVICES - set(services))
+    if missing:
+        fail(f"serviços obrigatórios ausentes em {path.relative_to(ROOT)}: {missing}")
+
+    publishers = [
+        name for name, service in services.items()
+        if isinstance(service, dict) and service.get("ports")
+    ]
+    if publishers != ["financial-gateway"]:
+        fail(f"{path.relative_to(ROOT)} publica portas em {publishers}; esperado somente financial-gateway")
+
+    for internal in ("financial-postgres", "financial-redis", "financial-rabbitmq", "financial-minio"):
+        service = services.get(internal)
+        if not isinstance(service, dict) or service.get("ports"):
+            fail(f"{internal} não pode publicar porta no host em {path.relative_to(ROOT)}")
+
+    gateway = services.get("financial-gateway")
+    if not isinstance(gateway, dict) or len(gateway.get("ports") or []) != 1:
+        fail(f"gateway precisa de exatamente um bind em {path.relative_to(ROOT)}")
+
+    expected_images = {
+        "financial-preflight": "ghcr.io/wkarts/argws-financial-api:latest",
+        "financial-api": "ghcr.io/wkarts/argws-financial-api:latest",
+        "financial-web": "ghcr.io/wkarts/argws-financial-web:latest",
+        "financial-gateway": "ghcr.io/wkarts/argws-financial-gateway:latest",
+    }
+    for name, expected in expected_images.items():
+        service = services.get(name)
+        if not isinstance(service, dict) or service.get("image") != expected:
+            fail(f"{name} deve usar {expected} em {path.relative_to(ROOT)}")
+        if service.get("pull_policy") != "always":
+            fail(f"{name} deve usar pull_policy=always em {path.relative_to(ROOT)}")
+
+    if path in CLOUDPANEL_RUNTIMES:
+        required = {"financial-domain-init", "financial-acme", "financial-cloudpanel-agent"}
+        missing_cloudpanel = sorted(required - set(services))
+        if missing_cloudpanel:
+            fail(f"runtime CloudPanel incompleto em {path.relative_to(ROOT)}: {missing_cloudpanel}")
 
         for name, expected in {
-            "financial-preflight": "ghcr.io/wkarts/argws-financial-api:latest",
-            "financial-api": "ghcr.io/wkarts/argws-financial-api:latest",
-            "financial-web": "ghcr.io/wkarts/argws-financial-web:latest",
-            "financial-gateway": "ghcr.io/wkarts/argws-financial-gateway:latest",
+            "financial-domain-init": "ghcr.io/wkarts/argws-financial-api:latest",
+            "financial-acme": "ghcr.io/wkarts/argws-financial-acme:latest",
+            "financial-cloudpanel-agent": "ghcr.io/wkarts/argws-financial-cloudpanel-agent:latest",
         }.items():
             service = services.get(name)
             if not isinstance(service, dict) or service.get("image") != expected:
                 fail(f"{name} deve usar {expected} em {path.relative_to(ROOT)}")
             if service.get("pull_policy") != "always":
                 fail(f"{name} deve usar pull_policy=always em {path.relative_to(ROOT)}")
+            if service.get("ports"):
+                fail(f"{name} não pode publicar porta no host")
 
-        content = path.read_bytes()
-        if reference is None:
-            reference = content
-        elif content != reference:
-            fail(f"runtime divergente do compose canônico: {path.relative_to(ROOT)}")
+        agent = services["financial-cloudpanel-agent"]
+        if agent.get("privileged") is not True or agent.get("pid") != "host" or agent.get("network_mode") != "host":
+            fail("financial-cloudpanel-agent precisa do contrato host privilegiado sem portas")
+        if "/:/host:rw" not in (agent.get("volumes") or []):
+            fail("financial-cloudpanel-agent precisa montar / em /host:rw")
+
+        text = path.read_text(encoding="utf-8")
+        for token in ("data-acme", "data-certs", "data-cloudpanel-agent"):
+            if token not in text:
+                fail(f"{token} ausente em {path.relative_to(ROOT)}")
+
+
+def main() -> int:
+    for path in RUNTIMES:
+        validate_runtime(path)
+
+    dockge = (ROOT / "deployments/dockge/compose.yaml").read_bytes()
+    cloudpanel = (ROOT / "deployments/cloudpanel/compose.yaml").read_bytes()
+    if dockge != cloudpanel:
+        fail("Dockge e CloudPanel precisam compartilhar o mesmo runtime CloudPanel-aware")
 
     local = yaml.safe_load((ROOT / "compose.local-build.yaml").read_text(encoding="utf-8"))
     if not has_build(local):
@@ -96,7 +164,7 @@ def main() -> int:
     print("- deployments image-only: OK")
     print("- única porta publicada: financial-gateway")
     print("- serviços internos sem host ports: OK")
-    print("- GHCR :latest: OK")
+    print("- Dockge/CloudPanel com wildcard ACME automático: OK")
     print("- build local isolado em compose.local-build.yaml: OK")
     return 0
 

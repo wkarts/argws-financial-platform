@@ -79,6 +79,20 @@ def validate_environment(env: Mapping[str, str] | None = None) -> list[str]:
         if minio_root_password and _unsafe_secret(minio_root_password):
             errors.append("MINIO_ROOT_PASSWORD precisa ter ao menos 12 caracteres e não pode ser placeholder.")
 
+    cloudflare_enabled = _truthy(_value(values, "CLOUDFLARE_ENABLED", "false"))
+    cloudflare_mode = _value(values, "CLOUDFLARE_PROVISIONING_MODE", "wildcard").lower()
+    if cloudflare_enabled:
+        if _unsafe_secret(_value(values, "CLOUDFLARE_API_TOKEN")):
+            errors.append("CLOUDFLARE_ENABLED=true exige CLOUDFLARE_API_TOKEN válido.")
+        if _unsafe_secret(_value(values, "CLOUDFLARE_ZONE_ID"), minimum=8):
+            errors.append("CLOUDFLARE_ENABLED=true exige CLOUDFLARE_ZONE_ID válido.")
+        if cloudflare_mode == "wildcard":
+            if not _value(values, "CLOUDFLARE_TENANT_RECORD_TARGET"):
+                errors.append("Wildcard gerenciado exige CLOUDFLARE_TENANT_RECORD_TARGET.")
+            for key in ("ACME_DOMAIN", "ACME_EMAIL", "CLOUDPANEL_SITE_DOMAIN", "CLOUDPANEL_WILDCARD_DOMAIN"):
+                if not _value(values, key):
+                    errors.append(f"Wildcard automático exige {key}.")
+
     if _truthy(_value(values, "SMTP_ENABLED", "false")):
         smtp_host = _value(values, "SMTP_HOST")
         if not smtp_host:

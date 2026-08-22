@@ -43,13 +43,12 @@ def main() -> int:
         if isinstance(service, dict) and "build" in service:
             fail(f"{service_name} ainda depende de build local")
 
-    forbidden = ("backend/Dockerfile", "frontend/Dockerfile", "infrastructure/nginx/gateway.conf")
-    for token in forbidden:
-        if token in compose_text:
-            fail(f"Dockge ainda referencia arquivo local: {token}")
-
     required_services = {
+        "financial-preflight",
+        "financial-domain-init",
         "financial-storage-init",
+        "financial-acme",
+        "financial-cloudpanel-agent",
         "financial-postgres",
         "financial-redis",
         "financial-rabbitmq",
@@ -71,19 +70,40 @@ def main() -> int:
     if missing_services:
         fail(f"Serviços ausentes no Dockge: {missing_services}")
 
+    publishers = [
+        name for name, service in services.items()
+        if isinstance(service, dict) and service.get("ports")
+    ]
+    if publishers != ["financial-gateway"]:
+        fail(f"Somente financial-gateway pode publicar porta; encontrado: {publishers}")
+
     expected_runtime = {
+        "financial-preflight": "ghcr.io/wkarts/argws-financial-api:latest",
+        "financial-domain-init": "ghcr.io/wkarts/argws-financial-api:latest",
         "financial-api": "ghcr.io/wkarts/argws-financial-api:latest",
         "financial-web": "ghcr.io/wkarts/argws-financial-web:latest",
         "financial-gateway": "ghcr.io/wkarts/argws-financial-gateway:latest",
+        "financial-acme": "ghcr.io/wkarts/argws-financial-acme:latest",
+        "financial-cloudpanel-agent": "ghcr.io/wkarts/argws-financial-cloudpanel-agent:latest",
     }
     for service_name, expected_image in expected_runtime.items():
         service = services.get(service_name)
         if not isinstance(service, dict):
             fail(f"{service_name} inválido no Compose Dockge")
         if service.get("pull_policy") != "always":
-            fail(f"{service_name} deve usar pull_policy: always fixo no Compose Dockge")
+            fail(f"{service_name} deve usar pull_policy: always")
         if service.get("image") != expected_image:
             fail(f"{service_name} deve usar imagem fixa {expected_image}")
+        if service_name != "financial-gateway" and service.get("ports"):
+            fail(f"{service_name} não pode publicar porta")
+
+    agent = services["financial-cloudpanel-agent"]
+    if agent.get("privileged") is not True:
+        fail("financial-cloudpanel-agent deve ser o único helper privilegiado")
+    if agent.get("pid") != "host" or agent.get("network_mode") != "host":
+        fail("financial-cloudpanel-agent precisa usar pid/network host")
+    if "/:/host:rw" not in (agent.get("volumes") or []):
+        fail("financial-cloudpanel-agent precisa montar o host em /host:rw")
 
     required_bind_sources = {
         "${FINANCIAL_DATA_ROOT:-.}/data-postgres",
@@ -93,32 +113,70 @@ def main() -> int:
         "${FINANCIAL_DATA_ROOT:-.}/data-backups",
         "${FINANCIAL_DATA_ROOT:-.}/data-runtime",
         "${FINANCIAL_DATA_ROOT:-.}/data-celery",
+        "${FINANCIAL_DATA_ROOT:-.}/data-acme",
+        "${FINANCIAL_DATA_ROOT:-.}/data-certs",
+        "${FINANCIAL_DATA_ROOT:-.}/data-cloudpanel-agent",
     }
     missing_binds = sorted(source for source in required_bind_sources if source not in compose_text)
     if missing_binds:
         fail(f"Bind mounts data-* ausentes: {missing_binds}")
 
     env = parse_env(ENV_EXAMPLE)
-    if env.get("APP_PULL_POLICY") != "always":
-        fail("APP_PULL_POLICY do Dockge deve ser always")
-    if env.get("FINANCIAL_DATA_ROOT") != ".":
-        fail("FINANCIAL_DATA_ROOT do Dockge deve ser . para persistir em ./data-*")
-
-    expected_images = {
-        "BACKEND_IMAGE": "ghcr.io/wkarts/argws-financial-api:latest",
-        "FRONTEND_IMAGE": "ghcr.io/wkarts/argws-financial-web:latest",
-        "GATEWAY_IMAGE": "ghcr.io/wkarts/argws-financial-gateway:latest",
+    required_env = {
+        "PLATFORM_DOMAIN",
+        "CONTROL_PLANE_HOST",
+        "API_HOST",
+        "TENANT_DOMAIN_ROOT",
+        "GATEWAY_PORT",
+        "FINANCIAL_DATA_ROOT",
+        "APP_SECRET_KEY",
+        "FIELD_ENCRYPTION_KEY",
+        "INTERNAL_SERVICES_PASSWORD",
+        "INITIAL_ADMIN_PASSWORD",
+        "DOMAIN_RECONCILIATION_TOKEN",
+        "BANKING_WEBHOOK_SECRET",
+        "CLOUDFLARE_API_TOKEN",
+        "CLOUDFLARE_ZONE_ID",
+        "CLOUDFLARE_PROVISIONING_MODE",
+        "ACME_DOMAIN",
+        "ACME_EMAIL",
+        "CLOUDPANEL_SITE_DOMAIN",
+        "CLOUDPANEL_WILDCARD_DOMAIN",
     }
-    for key, expected in expected_images.items():
-        if env.get(key) != expected:
-            fail(f"{key} deve ser {expected}")
+    missing_env = sorted(required_env - set(env))
+    if missing_env:
+        fail(f"Variáveis obrigatórias ausentes no exemplo Dockge: {missing_env}")
+    if env.get("FINANCIAL_DATA_ROOT") != ".":
+        fail("FINANCIAL_DATA_ROOT do Dockge deve ser .")
+    if env.get("CLOUDFLARE_PROVISIONING_MODE") != "wildcard":
+        fail("Dockge/CloudPanel deve usar provisionamento wildcard")
+    if env.get("CLOUDFLARE_ENABLED", "").lower() != "true":
+        fail("Cloudflare deve vir habilitada no exemplo CloudPanel automático")
+
+    forbidden_env = {
+        "RABBITMQ_MANAGEMENT_BIND_IP",
+        "RABBITMQ_MANAGEMENT_PORT",
+        "MINIO_CONSOLE_BIND_IP",
+        "MINIO_CONSOLE_PORT",
+        "PROMETHEUS_BIND_IP",
+        "PROMETHEUS_PORT",
+        "GRAFANA_BIND_IP",
+        "GRAFANA_PORT",
+        "BACKEND_IMAGE",
+        "FRONTEND_IMAGE",
+        "GATEWAY_IMAGE",
+        "APP_PULL_POLICY",
+    }
+    present_forbidden = sorted(forbidden_env & set(env))
+    if present_forbidden:
+        fail(f"Exemplo Dockge ainda expõe configuração redundante/interna: {present_forbidden}")
 
     print("Dockge runtime: PASS")
-    print("- image-only: OK")
-    print("- pull_policy always fixo: OK")
-    print("- imagens GHCR latest fixas: OK")
+    print("- image-only / GHCR latest: OK")
+    print("- única porta publicada: financial-gateway")
+    print("- wildcard DNS + ACME + CloudPanel agent: OK")
+    print("- credenciais centrais sem repetição: OK")
     print("- bind mounts ./data-*: OK")
-    print("- named volumes: ausentes")
     return 0
 
 
