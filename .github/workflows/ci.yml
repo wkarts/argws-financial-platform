@@ -68,6 +68,7 @@ jobs:
       - run: test -s "/tmp/dockge-package/ARGWS-Financial-Platform-v$(tr -d '[:space:]' < VERSION)-Dockge.zip"
       - run: cp .env.example .env
       - run: python scripts/generate_secrets.py --env .env
+      - run: mkdir -p data-postgres data-redis data-rabbitmq data-minio data-backups data-runtime data-celery secrets && touch secrets/rclone.conf secrets/backup-age-identity.txt
       - run: docker compose --env-file .env -f compose.yaml config --quiet
       - run: docker compose --env-file .env -f compose.yaml -f compose.local-build.yaml config --quiet
       - run: docker compose -f deployments/docker/compose.images.yaml --env-file deployments/docker/.env.example config --quiet
@@ -133,6 +134,7 @@ jobs:
           sed -i 's/^PROVISIONING_ASYNC=.*/PROVISIONING_ASYNC=false/' .env
           sed -i 's/^BOOTSTRAP_DEMO_TENANT=.*/BOOTSTRAP_DEMO_TENANT=true/' .env
           mkdir -p data-postgres data-redis data-rabbitmq data-minio data-backups data-runtime data-celery secrets
+          touch secrets/rclone.conf secrets/backup-age-identity.txt
       - name: Build local model and start platform
         run: $COMPOSE up -d --build --remove-orphans
       - name: Verify only gateway publishes a host port
