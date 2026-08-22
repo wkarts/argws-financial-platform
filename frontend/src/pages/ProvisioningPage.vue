@@ -31,21 +31,17 @@ async function load(silent = false) {
   if (!silent) loading.value = true
   error.value = ''
   try {
-    const requests: Promise<unknown>[] = [
+    const [jobResponse, domainResponse] = await Promise.all([
       api.get<Paginated<ProvisioningJob>>('/control/v1/provisioning', { params: { page: page.value, per_page: 25, status: status.value || undefined } }),
       api.get<ApiResponse<Array<TenantDomain & { tenant_id: string }>>>('/control/v1/domains')
-    ]
-    if (targetJobId.value) requests.push(api.get<ApiResponse<ProvisioningJob>>(`/control/v1/provisioning/${targetJobId.value}`))
-
-    const [jobRaw, domainRaw, selectedRaw] = await Promise.all(requests)
-    const jobResponse = jobRaw as Awaited<ReturnType<typeof api.get<Paginated<ProvisioningJob>>>>
-    const domainResponse = domainRaw as Awaited<ReturnType<typeof api.get<ApiResponse<Array<TenantDomain & { tenant_id: string }>>>>
+    ])
     jobs.value = jobResponse.data.data
     pages.value = jobResponse.data.meta.pages
     domains.value = domainResponse.data.data
 
-    if (selectedRaw) {
-      selected.value = (selectedRaw as Awaited<ReturnType<typeof api.get<ApiResponse<ProvisioningJob>>>>).data.data
+    if (targetJobId.value) {
+      const selectedResponse = await api.get<ApiResponse<ProvisioningJob>>(`/control/v1/provisioning/${targetJobId.value}`)
+      selected.value = selectedResponse.data.data
     } else if (selected.value) {
       selected.value = jobs.value.find(item => item.id === selected.value?.id) || selected.value
     }
