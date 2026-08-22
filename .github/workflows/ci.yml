@@ -62,15 +62,18 @@ jobs:
           python-version: '3.13'
       - run: pip install PyYAML SQLAlchemy pydantic pydantic-settings cryptography email-validator
       - run: python scripts/validate_project.py
+      - run: python scripts/validate_runtime_contract.py
       - run: python scripts/validate_dockge_runtime.py
       - run: python scripts/package_dockge_stack.py --output-dir /tmp/dockge-package
       - run: test -s "/tmp/dockge-package/ARGWS-Financial-Platform-v$(tr -d '[:space:]' < VERSION)-Dockge.zip"
       - run: cp .env.example .env
       - run: python scripts/generate_secrets.py --env .env
-      - run: docker compose config --quiet
+      - run: docker compose --env-file .env -f compose.yaml config --quiet
+      - run: docker compose --env-file .env -f compose.yaml -f compose.local-build.yaml config --quiet
       - run: docker compose -f deployments/docker/compose.images.yaml --env-file deployments/docker/.env.example config --quiet
       - run: docker compose -f deployments/dockge/compose.yaml --env-file deployments/dockge/.env.example config --quiet
       - run: docker compose -f deployments/cloudpanel/compose.yaml --env-file deployments/cloudpanel/.env.example config --quiet
+      - run: docker compose -f deployments/production/compose.yaml --env-file deployments/production/.env.example config --quiet
       - run: docker compose -f deployments/portainer/stack.yaml --env-file deployments/portainer/.env.example config --quiet
 
   docker-build:
@@ -106,6 +109,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [backend, frontend, structure]
     timeout-minutes: 25
+    env:
+      COMPOSE: docker compose --env-file .env -f compose.yaml -f compose.local-build.yaml
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -124,10 +129,20 @@ jobs:
           sed -i 's/^TRUSTED_HOSTS=.*/TRUSTED_HOSTS=localhost,127.0.0.1,.localhost/' .env
           sed -i 's/^CORS_ORIGINS=.*/CORS_ORIGINS=http:\/\/localhost:8800,http:\/\/control.localhost:8800,http:\/\/demo.localhost:8800/' .env
           sed -i 's/^GATEWAY_BIND_IP=.*/GATEWAY_BIND_IP=127.0.0.1/' .env
+          sed -i 's/^GATEWAY_PORT=.*/GATEWAY_PORT=8800/' .env
           sed -i 's/^PROVISIONING_ASYNC=.*/PROVISIONING_ASYNC=false/' .env
           sed -i 's/^BOOTSTRAP_DEMO_TENANT=.*/BOOTSTRAP_DEMO_TENANT=true/' .env
-      - name: Build and start platform
-        run: docker compose --env-file .env -f compose.yaml up -d --build --remove-orphans
+          mkdir -p data-postgres data-redis data-rabbitmq data-minio data-backups data-runtime data-celery secrets
+      - name: Build local model and start platform
+        run: $COMPOSE up -d --build --remove-orphans
+      - name: Verify only gateway publishes a host port
+        run: |
+          published="$($COMPOSE ps --format json | jq -r 'select(.Publishers != null) | .Publishers[]? | select(.PublishedPort != 0) | .Name' | sort -u)"
+          test "$published" = "argws-financial-platform-financial-gateway-1" || {
+            echo "Unexpected host publishers: $published"
+            $COMPOSE ps
+            exit 1
+          }
       - name: Wait for readiness
         run: |
           for attempt in $(seq 1 90); do
@@ -136,8 +151,8 @@ jobs:
             fi
             sleep 5
           done
-          docker compose --env-file .env -f compose.yaml ps
-          docker compose --env-file .env -f compose.yaml logs --tail=300
+          $COMPOSE ps
+          $COMPOSE logs --tail=300
           exit 1
       - name: Smoke tenant and Control Plane hosts
         run: |
@@ -145,10 +160,10 @@ jobs:
           curl -fsS -H 'Host: control.localhost' http://127.0.0.1:8800/ >/dev/null
           curl -fsS -H 'Host: demo.localhost' http://127.0.0.1:8800/ >/dev/null
       - name: Container status
-        run: docker compose --env-file .env -f compose.yaml ps
+        run: $COMPOSE ps
       - name: Collect logs on failure
         if: failure()
-        run: docker compose --env-file .env -f compose.yaml logs --tail=500
+        run: $COMPOSE logs --tail=500
       - name: Shutdown
         if: always()
-        run: docker compose --env-file .env -f compose.yaml down -v --remove-orphans
+        run: $COMPOSE down --remove-orphans
