@@ -62,6 +62,17 @@ class CloudflareDNSProvider:
                 record_id=item["id"], name=item["name"], content=item["content"], proxied=item["proxied"]
             )
 
+    async def ensure_managed_wildcard(self) -> DNSRecordResult:
+        """Garante o único wildcard DNS usado pelos domínios internos da plataforma.
+
+        O registro fica DNS-only de propósito: o certificado wildcard é emitido
+        localmente por ACME e instalado no CloudPanel, sem depender de SSL for SaaS.
+        """
+
+        hostname = f"*.{settings.tenant_domain_root}".lower().strip(".")
+        target = (settings.cloudflare_tenant_record_target or settings.platform_domain).lower().strip(".")
+        return await self.upsert_cname(hostname, target, proxied=False)
+
     async def delete_record(self, record_id: str) -> None:
         if not self.configured or not record_id:
             return
