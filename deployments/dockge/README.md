@@ -26,13 +26,13 @@ Preserve o header `Host`. Depois dessa criação a stack assume o restante:
 
 ```text
 Cloudflare API
-    ↓
-*.financeiro.seu-dominio.com.br  (DNS-only)
-    ↓
+    ├── proxy.financeiro.seu-dominio.com.br  -> origem real (DNS-only)
+    └── *.financeiro.seu-dominio.com.br      -> proxy... (DNS-only)
+                    ↓
 ACME DNS-01
     ├── financeiro.seu-dominio.com.br
     └── *.financeiro.seu-dominio.com.br
-    ↓
+                    ↓
 financial-cloudpanel-agent
     ├── adiciona wildcard ao server_name
     ├── valida nginx -t
@@ -98,12 +98,12 @@ O modo padrão é:
 CLOUDFLARE_ENABLED=true
 CLOUDFLARE_PROVISIONING_MODE=wildcard
 CLOUDFLARE_PROXIED=false
-CLOUDFLARE_TENANT_RECORD_TARGET=${PLATFORM_DOMAIN}
+CLOUDFLARE_TENANT_RECORD_TARGET=proxy.${PLATFORM_DOMAIN}
 ```
 
-A aplicação garante o registro `*.TENANT_DOMAIN_ROOT` como DNS-only. Para esse modelo, o alvo precisa resolver para a mesma origem que atende o Reverse Proxy do CloudPanel; não dependa do SSL Universal da Cloudflare para um wildcard de segundo nível.
+O `financial-domain-init` lê pela API Cloudflare o registro DNS atual do domínio principal e deriva sua origem. A partir dela, cria/reconcilia automaticamente o hostname `proxy.${PLATFORM_DOMAIN}` em DNS-only e depois aponta o wildcard para esse proxy também em DNS-only. Não é necessário informar o IP público novamente no `.env`.
 
-O certificado wildcard é emitido localmente por DNS-01 e instalado no CloudPanel pela própria stack.
+Isso evita depender do SSL Universal da Cloudflare para um wildcard de segundo nível. O TLS dos subdomínios é terminado no CloudPanel pelo certificado wildcard emitido localmente por DNS-01.
 
 ## Primeira instalação
 
@@ -115,7 +115,7 @@ O certificado wildcard é emitido localmente por DNS-01 e instalado no CloudPane
 6. Execute `docker compose pull`.
 7. Execute `docker compose up -d`.
 
-Antes das migrations, `financial-preflight` valida a configuração sem imprimir segredos. Em seguida `financial-domain-init` garante o wildcard DNS e só então a persistência e a aplicação são iniciadas.
+Antes das migrations, `financial-preflight` valida a configuração sem imprimir segredos. Em seguida `financial-domain-init` garante a origem DNS-only e o wildcard, e só então a persistência e a aplicação são iniciadas.
 
 ## Verificação
 
