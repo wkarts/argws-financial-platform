@@ -11,13 +11,13 @@ from uuid import UUID
 from celery.signals import worker_process_shutdown
 from celery.utils.log import get_task_logger
 from sqlalchemy import func, select
-from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.tenant_context import TenantContext, set_tenant_context, reset_tenant_context
 from app.db.platform import PlatformSessionLocal, platform_engine
 from app.db.tenant import tenant_engines
-from app.models.platform import Tenant, TenantUsageSnapshot
+from app.models.platform import Tenant, TenantDomain, TenantUsageSnapshot
+from app.models.tenant import Company, Customer, Receivable, TenantUser
 from app.services.backup import BackupService
 from app.services.collection_rules import CollectionRuleService
 from app.services.notifications import NotificationService
@@ -25,7 +25,6 @@ from app.services.outbox import OutboxService
 from app.services.outbound_webhooks import OutboundWebhookService
 from app.services.provisioning import provisioning_service
 from app.services.recurrence import RecurrenceService
-from app.models.tenant import Company, Customer, Receivable, TenantUser
 from app.services.tenant_resolver import TenantResolver
 from app.workers.celery_app import celery_app
 
@@ -84,8 +83,22 @@ def close_worker_async_resources(**_: Any) -> None:
 async def for_each_active_tenant(callback: Callable[[Any, TenantContext], Awaitable[int]]) -> dict[str, int]:
     results: dict[str, int] = {}
     async with PlatformSessionLocal() as platform_session:
+        # Um tenant só é operacional para tarefas periódicas quando o domínio
+        # primário também está ativo. Isso evita transformar estados legítimos de
+        # provisionamento/reconciliação em exceções a cada minuto nos workers.
         tenant_ids = list(
-            (await platform_session.scalars(select(Tenant.id).where(Tenant.status == "ACTIVE"))).all()
+            (
+                await platform_session.scalars(
+                    select(Tenant.id)
+                    .join(TenantDomain, TenantDomain.tenant_id == Tenant.id)
+                    .where(
+                        Tenant.status == "ACTIVE",
+                        TenantDomain.is_primary.is_(True),
+                        TenantDomain.status == "ACTIVE",
+                    )
+                    .distinct()
+                )
+            ).all()
         )
         resolver = TenantResolver(platform_session)
         for tenant_id in tenant_ids:
@@ -171,7 +184,20 @@ def capture_tenant_usage() -> dict[str, int]:
     async def action() -> dict[str, int]:
         captured: dict[str, int] = {}
         async with PlatformSessionLocal() as platform_session:
-            tenants = list((await platform_session.scalars(select(Tenant).where(Tenant.status == "ACTIVE"))).all())
+            tenants = list(
+                (
+                    await platform_session.scalars(
+                        select(Tenant)
+                        .join(TenantDomain, TenantDomain.tenant_id == Tenant.id)
+                        .where(
+                            Tenant.status == "ACTIVE",
+                            TenantDomain.is_primary.is_(True),
+                            TenantDomain.status == "ACTIVE",
+                        )
+                        .distinct()
+                    )
+                ).all()
+            )
             resolver = TenantResolver(platform_session)
             period = datetime.now(UTC).strftime("%Y-%m")
             for tenant in tenants:
