@@ -1,25 +1,35 @@
+# Development continua sendo um deploy image-only. Para compilar código local,
+# use explicitamente compose.local-build.yaml fora de deployments/.
 services:
+  financial-preflight:
+    environment:
+      APP_ENV: development
+
   financial-api:
+    environment:
+      APP_ENV: development
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--proxy-headers", "--forwarded-allow-ips", "*"]
     volumes:
       - ../../backend:/app
-      - ../../scripts:/workspace/scripts
+
   financial-worker-default:
+    environment:
+      APP_ENV: development
     volumes:
       - ../../backend:/app
-      - ../../scripts:/workspace/scripts
+
   financial-worker-billing:
+    environment:
+      APP_ENV: development
     volumes:
       - ../../backend:/app
-      - ../../scripts:/workspace/scripts
+
   financial-worker-notifications:
+    environment:
+      APP_ENV: development
     volumes:
       - ../../backend:/app
-      - ../../scripts:/workspace/scripts
-  financial-web:
-    build:
-      context: ../..
-      dockerfile: frontend/Dockerfile
+
   financial-gateway:
     ports:
-      - "0.0.0.0:${GATEWAY_PORT:-8800}:80"
+      - "127.0.0.1:${GATEWAY_PORT:-8800}:80"
