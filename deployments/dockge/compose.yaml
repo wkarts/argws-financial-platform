@@ -1,133 +1,9 @@
 name: ${COMPOSE_PROJECT_NAME:-argws-financial-platform}
 
-# ARGWS Financial Platform — runtime canônico de produção.
-# - todos os deployments usam imagens publicadas no GHCR;
-# - somente financial-gateway publica porta no host;
-# - Postgres, Redis, RabbitMQ, MinIO, Prometheus e Grafana ficam apenas na rede interna;
-# - persistência fica em ./data-* por padrão;
-# - build local existe exclusivamente em compose.local-build.yaml.
-
-x-logging: &default-logging
-  driver: local
-  options:
-    max-size: "20m"
-    max-file: "5"
-
-x-api-env: &api-env
-  APP_NAME: ${APP_NAME:-ARGWS Financial Platform}
-  APP_ENV: ${APP_ENV:-production}
-  APP_DEBUG: ${APP_DEBUG:-false}
-  APP_TIMEZONE: ${APP_TIMEZONE:-America/Bahia}
-  APP_SECRET_KEY: ${APP_SECRET_KEY:?APP_SECRET_KEY obrigatória}
-  FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY obrigatória}
-  LOG_LEVEL: ${LOG_LEVEL:-INFO}
-  PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:-finance.argws.com.br}
-  CONTROL_PLANE_HOST: ${CONTROL_PLANE_HOST:-control.finance.argws.com.br}
-  API_HOST: ${API_HOST:-api.finance.argws.com.br}
-  TENANT_DOMAIN_ROOT: ${TENANT_DOMAIN_ROOT:-finance.argws.com.br}
-  PUBLIC_SCHEME: ${PUBLIC_SCHEME:-https}
-  TRUSTED_HOSTS: ${TRUSTED_HOSTS:-finance.argws.com.br,control.finance.argws.com.br,admin.finance.argws.com.br,api.finance.argws.com.br,demo.finance.argws.com.br,.finance.argws.com.br,localhost,127.0.0.1}
-  CORS_ORIGINS: ${CORS_ORIGINS:-https://finance.argws.com.br,https://control.finance.argws.com.br,https://admin.finance.argws.com.br,https://demo.finance.argws.com.br}
-  POSTGRES_HOST: financial-postgres
-  POSTGRES_PORT: "5432"
-  POSTGRES_DB: ${POSTGRES_DB:-financial_platform}
-  POSTGRES_USER: ${POSTGRES_USER:-financial_admin}
-  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obrigatória}
-  POSTGRES_ADMIN_USER: ${POSTGRES_ADMIN_USER:-financial_admin}
-  POSTGRES_ADMIN_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?POSTGRES_ADMIN_PASSWORD obrigatória}
-  POSTGRES_POOL_SIZE: ${POSTGRES_POOL_SIZE:-20}
-  POSTGRES_MAX_OVERFLOW: ${POSTGRES_MAX_OVERFLOW:-20}
-  TENANT_DB_PREFIX: ${TENANT_DB_PREFIX:-fin_tenant}
-  TENANT_DB_USER_PREFIX: ${TENANT_DB_USER_PREFIX:-fin_t}
-  REDIS_URL: redis://financial-redis:6379/0
-  REDIS_CACHE_TTL_SECONDS: ${REDIS_CACHE_TTL_SECONDS:-300}
-  RABBITMQ_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
-  CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
-  CELERY_RESULT_BACKEND: redis://financial-redis:6379/1
-  CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER:-false}
-  PROVISIONING_ASYNC: ${PROVISIONING_ASYNC:-true}
-  S3_ENDPOINT_URL: http://financial-minio:9000
-  S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-}
-  S3_REGION: ${S3_REGION:-sa-east-1}
-  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-financial}
-  S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY obrigatória}
-  S3_USE_SSL: ${S3_USE_SSL:-false}
-  S3_BUCKET_PREFIX: ${S3_BUCKET_PREFIX:-financial-tenant}
-  PLATFORM_ADMIN_NAME: ${PLATFORM_ADMIN_NAME:-Administrador da Plataforma}
-  PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:?PLATFORM_ADMIN_EMAIL obrigatório}
-  PLATFORM_ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD obrigatória}
-  BOOTSTRAP_DEMO_TENANT: ${BOOTSTRAP_DEMO_TENANT:-true}
-  DEMO_TENANT_NAME: ${DEMO_TENANT_NAME:-Empresa Demonstração}
-  DEMO_TENANT_SLUG: ${DEMO_TENANT_SLUG:-demo}
-  DEMO_TENANT_ADMIN_NAME: ${DEMO_TENANT_ADMIN_NAME:-Administrador Demo}
-  DEMO_TENANT_ADMIN_EMAIL: ${DEMO_TENANT_ADMIN_EMAIL:-admin.demo@finance.argws.com.br}
-  DEMO_TENANT_ADMIN_PASSWORD: ${DEMO_TENANT_ADMIN_PASSWORD:-}
-  CLOUDFLARE_ENABLED: ${CLOUDFLARE_ENABLED:-false}
-  CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
-  CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID:-}
-  CLOUDFLARE_ZONE_NAME: ${CLOUDFLARE_ZONE_NAME:-argws.com.br}
-  CLOUDFLARE_PROXIED: ${CLOUDFLARE_PROXIED:-false}
-  CLOUDFLARE_TENANT_RECORD_TARGET: ${CLOUDFLARE_TENANT_RECORD_TARGET:-proxy.finance.argws.com.br}
-  CLOUDFLARE_PROVISIONING_MODE: ${CLOUDFLARE_PROVISIONING_MODE:-wildcard}
-  DOMAIN_RECONCILIATION_TOKEN: ${DOMAIN_RECONCILIATION_TOKEN:?DOMAIN_RECONCILIATION_TOKEN obrigatória}
-  SMTP_ENABLED: ${SMTP_ENABLED:-false}
-  SMTP_HOST: ${SMTP_HOST:-}
-  SMTP_PORT: ${SMTP_PORT:-587}
-  SMTP_USERNAME: ${SMTP_USERNAME:-}
-  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-  SMTP_SECURITY: ${SMTP_SECURITY:-starttls}
-  SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
-  SMTP_FROM_NAME: ${SMTP_FROM_NAME:-ARGWS Financial Platform}
-  SMTP_TIMEOUT_SECONDS: ${SMTP_TIMEOUT_SECONDS:-30}
-  EVOLUTION_ENABLED: ${EVOLUTION_ENABLED:-false}
-  EVOLUTION_BASE_URL: ${EVOLUTION_BASE_URL:-}
-  EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
-  EVOLUTION_INSTANCE: ${EVOLUTION_INSTANCE:-financial-platform}
-  EVOLUTION_SEND_TEXT_PATH: ${EVOLUTION_SEND_TEXT_PATH:-/message/sendText/{instance}}
-  EVOLUTION_SEND_MEDIA_PATH: ${EVOLUTION_SEND_MEDIA_PATH:-/message/sendMedia/{instance}}
-  EVOLUTION_WEBHOOK_SECRET: ${EVOLUTION_WEBHOOK_SECRET:-}
-  EVOLUTION_TIMEOUT_SECONDS: ${EVOLUTION_TIMEOUT_SECONDS:-30}
-  BANKING_WEBHOOK_SECRET: ${BANKING_WEBHOOK_SECRET:?BANKING_WEBHOOK_SECRET obrigatória}
-  WEBHOOK_MAX_AGE_SECONDS: ${WEBHOOK_MAX_AGE_SECONDS:-300}
-  BACKUP_ENABLED: ${BACKUP_ENABLED:-true}
-  BACKUP_DIR: /data/backups
-  BACKUP_CRON: ${BACKUP_CRON:-0 2 * * *}
-  BACKUP_KEEP_DAILY: ${BACKUP_KEEP_DAILY:-14}
-  BACKUP_KEEP_WEEKLY: ${BACKUP_KEEP_WEEKLY:-8}
-  BACKUP_KEEP_MONTHLY: ${BACKUP_KEEP_MONTHLY:-12}
-  BACKUP_COMPRESS_LEVEL: ${BACKUP_COMPRESS_LEVEL:-9}
-  BACKUP_ENCRYPTION_RECIPIENT: ${BACKUP_ENCRYPTION_RECIPIENT:-}
-  BACKUP_ENCRYPTION_IDENTITY: /run/secrets/backup_age_identity
-  MAINTENANCE_FILE: /data/runtime/maintenance.flag
-  BACKUP_UPLOAD_S3: ${BACKUP_UPLOAD_S3:-true}
-  BACKUP_S3_BUCKET: ${BACKUP_S3_BUCKET:-financial-backups}
-  BACKUP_RCLONE_CONFIG: /run/secrets/rclone_config
-  BACKUP_GOOGLE_DRIVE_ENABLED: ${BACKUP_GOOGLE_DRIVE_ENABLED:-false}
-  BACKUP_GOOGLE_DRIVE_REMOTE: ${BACKUP_GOOGLE_DRIVE_REMOTE:-gdrive:argws-financial-platform}
-  BACKUP_DROPBOX_ENABLED: ${BACKUP_DROPBOX_ENABLED:-false}
-  BACKUP_DROPBOX_REMOTE: ${BACKUP_DROPBOX_REMOTE:-dropbox:argws-financial-platform}
-  ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-30}
-  REFRESH_TOKEN_DAYS: ${REFRESH_TOKEN_DAYS:-14}
-  PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-12}
-  LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-8}
-  LOGIN_LOCK_MINUTES: ${LOGIN_LOCK_MINUTES:-15}
-  RATE_LIMIT_DEFAULT: ${RATE_LIMIT_DEFAULT:-120/minute}
-  ALLOW_DEV_TENANT_HEADER: ${ALLOW_DEV_TENANT_HEADER:-false}
-  PROMETHEUS_ENABLED: ${PROMETHEUS_ENABLED:-true}
-
-x-app: &app
-  image: ghcr.io/wkarts/argws-financial-api:latest
-  pull_policy: always
-  restart: unless-stopped
-  environment: *api-env
-  networks: [financial-internal]
-  volumes:
-    - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
-    - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
-    - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
-    - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
-  security_opt: ["no-new-privileges:true"]
-  logging: *default-logging
+# ARGWS Financial Platform — Dockge / produção por imagens.
+# YAML deliberadamente plano: sem anchors, aliases ou merge keys.
+# Apenas financial-gateway publica porta no host.
+# Serviços internos permanecem acessíveis somente pela rede Docker.
 
 services:
   financial-preflight:
@@ -135,22 +11,60 @@ services:
     pull_policy: always
     restart: "no"
     network_mode: none
-    environment: *api-env
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: financial-postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://financial-redis:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_RESULT_BACKEND: redis://financial-redis:6379/1
+      S3_ENDPOINT_URL: http://financial-minio:9000
+      BACKUP_DIR: /data/backups
+      BACKUP_ENCRYPTION_IDENTITY: /run/secrets/backup_age_identity
+      BACKUP_RCLONE_CONFIG: /run/secrets/rclone_config
+      MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["python", "-m", "app.preflight"]
-    security_opt: ["no-new-privileges:true"]
-    logging: *default-logging
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-domain-init:
     image: ghcr.io/wkarts/argws-financial-api:latest
     pull_policy: always
     restart: "no"
-    environment: *api-env
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: financial-postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://financial-redis:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_RESULT_BACKEND: redis://financial-redis:6379/1
+      S3_ENDPOINT_URL: http://financial-minio:9000
+      BACKUP_DIR: /data/backups
+      BACKUP_ENCRYPTION_IDENTITY: /run/secrets/backup_age_identity
+      BACKUP_RCLONE_CONFIG: /run/secrets/rclone_config
+      MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["python", "-m", "app.domain_bootstrap"]
     depends_on:
-      financial-preflight: {condition: service_completed_successfully}
-    networks: [financial-internal]
-    security_opt: ["no-new-privileges:true"]
-    logging: *default-logging
+      financial-preflight:
+        condition: service_completed_successfully
+    networks:
+      - financial-internal
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-storage-init:
     image: alpine:3.22
@@ -158,7 +72,8 @@ services:
     user: "0:0"
     network_mode: none
     depends_on:
-      financial-domain-init: {condition: service_completed_successfully}
+      financial-domain-init:
+        condition: service_completed_successfully
     volumes:
       - ${FINANCIAL_DATA_ROOT:-.}/data-postgres:/data/postgres
       - ${FINANCIAL_DATA_ROOT:-.}/data-redis:/data/redis
@@ -185,17 +100,23 @@ services:
           touch /secrets/rclone.conf /secrets/backup-age-identity.txt
           chmod 0777 /data/postgres /data/redis /data/rabbitmq /data/minio /data/prometheus /data/grafana
           chmod 0770 /data/backups /data/runtime /data/celery /data/monitoring
+          chmod 0750 /data/acme /data-certs /data/cloudpanel-agent 2>/dev/null || true
           chmod 0750 /data/acme /data/certs /data/cloudpanel-agent
           chmod 0700 /secrets
           chmod 0600 /secrets/rclone.conf /secrets/backup-age-identity.txt
-    logging: *default-logging
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-monitoring-init:
     image: alpine:3.22
     restart: "no"
     network_mode: none
     depends_on:
-      financial-storage-init: {condition: service_completed_successfully}
+      financial-storage-init:
+        condition: service_completed_successfully
     volumes:
       - ${FINANCIAL_DATA_ROOT:-.}/data-monitoring:/config
     command:
@@ -224,13 +145,18 @@ services:
               isDefault: true
               editable: false
           EOF
-    logging: *default-logging
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-postgres:
     image: ${POSTGRES_IMAGE:-postgres:17-alpine}
     restart: unless-stopped
     depends_on:
-      financial-storage-init: {condition: service_completed_successfully}
+      financial-storage-init:
+        condition: service_completed_successfully
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-financial_platform}
       POSTGRES_USER: ${POSTGRES_USER:-financial_admin}
@@ -245,14 +171,20 @@ services:
       timeout: 5s
       retries: 30
       start_period: 20s
-    networks: [financial-internal]
-    logging: *default-logging
+    networks:
+      - financial-internal
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-redis:
     image: ${REDIS_IMAGE:-redis:8-alpine}
     restart: unless-stopped
     depends_on:
-      financial-storage-init: {condition: service_completed_successfully}
+      financial-storage-init:
+        condition: service_completed_successfully
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory-policy", "noeviction"]
     volumes:
       - ${FINANCIAL_DATA_ROOT:-.}/data-redis:/data
@@ -261,14 +193,20 @@ services:
       interval: 10s
       timeout: 5s
       retries: 20
-    networks: [financial-internal]
-    logging: *default-logging
+    networks:
+      - financial-internal
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-rabbitmq:
     image: ${RABBITMQ_IMAGE:-rabbitmq:4-management-alpine}
     restart: unless-stopped
     depends_on:
-      financial-storage-init: {condition: service_completed_successfully}
+      financial-storage-init:
+        condition: service_completed_successfully
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-financial}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}
@@ -282,14 +220,20 @@ services:
       timeout: 10s
       retries: 30
       start_period: 30s
-    networks: [financial-internal]
-    logging: *default-logging
+    networks:
+      - financial-internal
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-minio:
     image: ${MINIO_IMAGE:-quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z}
     restart: unless-stopped
     depends_on:
-      financial-storage-init: {condition: service_completed_successfully}
+      financial-storage-init:
+        condition: service_completed_successfully
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-financial}
@@ -303,14 +247,20 @@ services:
       timeout: 5s
       retries: 30
       start_period: 20s
-    networks: [financial-internal]
-    logging: *default-logging
+    networks:
+      - financial-internal
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-minio-init:
     image: ${MINIO_MC_IMAGE:-quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z}
     restart: "no"
     depends_on:
-      financial-minio: {condition: service_healthy}
+      financial-minio:
+        condition: service_healthy
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-financial}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obrigatória}
@@ -322,81 +272,332 @@ services:
           mc alias set local http://financial-minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
           mc mb --ignore-existing "local/$${BACKUP_S3_BUCKET}"
           mc anonymous set none "local/$${BACKUP_S3_BUCKET}"
-    networks: [financial-internal]
-    logging: *default-logging
+    networks:
+      - financial-internal
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-migrate:
-    <<: *app
+    image: ghcr.io/wkarts/argws-financial-api:latest
+    pull_policy: always
     restart: "no"
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: financial-postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://financial-redis:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_RESULT_BACKEND: redis://financial-redis:6379/1
+      S3_ENDPOINT_URL: http://financial-minio:9000
+      BACKUP_DIR: /data/backups
+      BACKUP_ENCRYPTION_IDENTITY: /run/secrets/backup_age_identity
+      BACKUP_RCLONE_CONFIG: /run/secrets/rclone_config
+      MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["python", "-m", "app.cli", "migrate-platform"]
     depends_on:
-      financial-storage-init: {condition: service_completed_successfully}
-      financial-postgres: {condition: service_healthy}
+      financial-storage-init:
+        condition: service_completed_successfully
+      financial-postgres:
+        condition: service_healthy
+    networks:
+      - financial-internal
+    volumes:
+      - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
+      - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-migrate-tenants:
-    <<: *app
+    image: ghcr.io/wkarts/argws-financial-api:latest
+    pull_policy: always
     restart: "no"
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: financial-postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://financial-redis:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_RESULT_BACKEND: redis://financial-redis:6379/1
+      S3_ENDPOINT_URL: http://financial-minio:9000
+      BACKUP_DIR: /data/backups
+      BACKUP_ENCRYPTION_IDENTITY: /run/secrets/backup_age_identity
+      BACKUP_RCLONE_CONFIG: /run/secrets/rclone_config
+      MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["python", "-m", "app.cli", "migrate-all-tenants"]
     depends_on:
-      financial-migrate: {condition: service_completed_successfully}
+      financial-migrate:
+        condition: service_completed_successfully
+    networks:
+      - financial-internal
+    volumes:
+      - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
+      - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-bootstrap:
-    <<: *app
+    image: ghcr.io/wkarts/argws-financial-api:latest
+    pull_policy: always
     restart: "no"
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: financial-postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://financial-redis:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_RESULT_BACKEND: redis://financial-redis:6379/1
+      S3_ENDPOINT_URL: http://financial-minio:9000
+      BACKUP_DIR: /data/backups
+      BACKUP_ENCRYPTION_IDENTITY: /run/secrets/backup_age_identity
+      BACKUP_RCLONE_CONFIG: /run/secrets/rclone_config
+      MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["python", "-m", "app.cli", "bootstrap"]
     depends_on:
-      financial-migrate-tenants: {condition: service_completed_successfully}
-      financial-minio-init: {condition: service_completed_successfully}
-      financial-redis: {condition: service_healthy}
-      financial-rabbitmq: {condition: service_healthy}
+      financial-migrate-tenants:
+        condition: service_completed_successfully
+      financial-minio-init:
+        condition: service_completed_successfully
+      financial-redis:
+        condition: service_healthy
+      financial-rabbitmq:
+        condition: service_healthy
+    networks:
+      - financial-internal
+    volumes:
+      - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
+      - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-api:
-    <<: *app
+    image: ghcr.io/wkarts/argws-financial-api:latest
+    pull_policy: always
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: financial-postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://financial-redis:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_RESULT_BACKEND: redis://financial-redis:6379/1
+      S3_ENDPOINT_URL: http://financial-minio:9000
+      BACKUP_DIR: /data/backups
+      BACKUP_ENCRYPTION_IDENTITY: /run/secrets/backup_age_identity
+      BACKUP_RCLONE_CONFIG: /run/secrets/rclone_config
+      MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["gunicorn", "app.main:app", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--workers", "${API_WORKERS:-2}", "--timeout", "120", "--graceful-timeout", "30", "--access-logfile", "-"]
     depends_on:
-      financial-bootstrap: {condition: service_completed_successfully}
+      financial-bootstrap:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=5).read()\""]
       interval: 20s
       timeout: 8s
       retries: 20
       start_period: 30s
+    networks:
+      - financial-internal
+    volumes:
+      - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
+      - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: local
+      options:
+        max-size: "20m"
+        max-file: "5"
 
   financial-worker-default:
-    <<: *app
+    image: ghcr.io/wkarts/argws-financial-api:latest
+    pull_policy: always
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: financial-postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://financial-redis:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_RESULT_BACKEND: redis://financial-redis:6379/1
+      S3_ENDPOINT_URL: http://financial-minio:9000
+      BACKUP_DIR: /data/backups
+      BACKUP_ENCRYPTION_IDENTITY: /run/secrets/backup_age_identity
+      BACKUP_RCLONE_CONFIG: /run/secrets/rclone_config
+      MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.default,financial.provisioning,financial.outbox", "--loglevel=INFO", "--concurrency=${CELERY_DEFAULT_CONCURRENCY:-2}", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
-      financial-api: {condition: service_healthy}
+      financial-api:
+        condition: service_healthy
+    networks: [financial-internal]
+    volumes:
+      - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
+      - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: local
+      options: {max-size: "20m", max-file: "5"}
 
   financial-worker-billing:
-    <<: *app
+    image: ghcr.io/wkarts/argws-financial-api:latest
+    pull_policy: always
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: financial-postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://financial-redis:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_RESULT_BACKEND: redis://financial-redis:6379/1
+      S3_ENDPOINT_URL: http://financial-minio:9000
+      BACKUP_DIR: /data/backups
+      BACKUP_ENCRYPTION_IDENTITY: /run/secrets/backup_age_identity
+      BACKUP_RCLONE_CONFIG: /run/secrets/rclone_config
+      MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.billing,financial.banking,financial.cnab,financial.reconciliation", "--loglevel=INFO", "--concurrency=${CELERY_BILLING_CONCURRENCY:-2}", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
       financial-api: {condition: service_healthy}
+    networks: [financial-internal]
+    volumes:
+      - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
+      - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: local
+      options: {max-size: "20m", max-file: "5"}
 
   financial-worker-notifications:
-    <<: *app
+    image: ghcr.io/wkarts/argws-financial-api:latest
+    pull_policy: always
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: financial-postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://financial-redis:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_RESULT_BACKEND: redis://financial-redis:6379/1
+      S3_ENDPOINT_URL: http://financial-minio:9000
+      BACKUP_DIR: /data/backups
+      BACKUP_ENCRYPTION_IDENTITY: /run/secrets/backup_age_identity
+      BACKUP_RCLONE_CONFIG: /run/secrets/rclone_config
+      MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.notifications,financial.webhooks", "--loglevel=INFO", "--concurrency=${CELERY_NOTIFICATION_CONCURRENCY:-2}", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
       financial-api: {condition: service_healthy}
+    networks: [financial-internal]
+    volumes:
+      - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
+      - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: local
+      options: {max-size: "20m", max-file: "5"}
 
   financial-worker-backups:
-    <<: *app
+    image: ghcr.io/wkarts/argws-financial-api:latest
+    pull_policy: always
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: financial-postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://financial-redis:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_RESULT_BACKEND: redis://financial-redis:6379/1
+      S3_ENDPOINT_URL: http://financial-minio:9000
+      BACKUP_DIR: /data/backups
+      BACKUP_ENCRYPTION_IDENTITY: /run/secrets/backup_age_identity
+      BACKUP_RCLONE_CONFIG: /run/secrets/rclone_config
+      MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.backups,financial.exports", "--loglevel=INFO", "--concurrency=1", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
       financial-api: {condition: service_healthy}
+    networks: [financial-internal]
+    volumes:
+      - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
+      - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
+      - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: local
+      options: {max-size: "20m", max-file: "5"}
 
   financial-beat:
-    <<: *app
+    image: ghcr.io/wkarts/argws-financial-api:latest
+    pull_policy: always
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: financial-postgres
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://financial-redis:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+      CELERY_RESULT_BACKEND: redis://financial-redis:6379/1
+      S3_ENDPOINT_URL: http://financial-minio:9000
+      BACKUP_DIR: /data/backups
+      BACKUP_ENCRYPTION_IDENTITY: /run/secrets/backup_age_identity
+      BACKUP_RCLONE_CONFIG: /run/secrets/rclone_config
+      MAINTENANCE_FILE: /data/runtime/maintenance.flag
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "beat", "--loglevel=INFO", "--schedule=/var/lib/celery/celerybeat-schedule", "--pidfile=/tmp/celerybeat.pid"]
+    depends_on:
+      financial-api: {condition: service_healthy}
+    networks: [financial-internal]
     volumes:
       - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
       - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
       - ${FINANCIAL_DATA_ROOT:-.}/data-celery:/var/lib/celery
       - ${FINANCIAL_DATA_ROOT:-.}/secrets/rclone.conf:/run/secrets/rclone_config:ro
       - ${FINANCIAL_DATA_ROOT:-.}/secrets/backup-age-identity.txt:/run/secrets/backup_age_identity:ro
-    depends_on:
-      financial-api: {condition: service_healthy}
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: local
+      options: {max-size: "20m", max-file: "5"}
 
   financial-web:
     image: ghcr.io/wkarts/argws-financial-web:latest
@@ -411,7 +612,9 @@ services:
       retries: 20
     networks: [financial-internal]
     security_opt: ["no-new-privileges:true"]
-    logging: *default-logging
+    logging:
+      driver: local
+      options: {max-size: "20m", max-file: "5"}
 
   financial-prometheus:
     image: prom/prometheus:v3.5.0
@@ -428,7 +631,9 @@ services:
       - ${FINANCIAL_DATA_ROOT:-.}/data-prometheus:/prometheus
     networks: [financial-internal]
     security_opt: ["no-new-privileges:true"]
-    logging: *default-logging
+    logging:
+      driver: local
+      options: {max-size: "20m", max-file: "5"}
 
   financial-grafana:
     image: grafana/grafana:12.1.0
@@ -445,7 +650,9 @@ services:
       - ${FINANCIAL_DATA_ROOT:-.}/data-monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
     networks: [financial-internal]
     security_opt: ["no-new-privileges:true"]
-    logging: *default-logging
+    logging:
+      driver: local
+      options: {max-size: "20m", max-file: "5"}
 
   financial-acme:
     profiles: ["cloudpanel"]
@@ -454,6 +661,7 @@ services:
     restart: unless-stopped
     depends_on:
       financial-storage-init: {condition: service_completed_successfully}
+    env_file: [.env]
     environment:
       CF_Token: ${CLOUDFLARE_API_TOKEN:-}
       ACME_DOMAIN: ${ACME_DOMAIN:-finance.argws.com.br}
@@ -466,7 +674,9 @@ services:
       - ${FINANCIAL_DATA_ROOT:-.}/data-certs:/certs
     networks: [financial-internal]
     security_opt: ["no-new-privileges:true"]
-    logging: *default-logging
+    logging:
+      driver: local
+      options: {max-size: "20m", max-file: "5"}
 
   financial-cloudpanel-agent:
     profiles: ["cloudpanel"]
@@ -480,6 +690,7 @@ services:
     read_only: true
     depends_on:
       financial-acme: {condition: service_started}
+    env_file: [.env]
     environment:
       HOST_ROOT: /host
       CERT_DIR: /certs
@@ -493,7 +704,9 @@ services:
       - ${FINANCIAL_DATA_ROOT:-.}/data-cloudpanel-agent:/state:rw
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
-    logging: *default-logging
+    logging:
+      driver: local
+      options: {max-size: "20m", max-file: "5"}
 
   financial-gateway:
     image: ghcr.io/wkarts/argws-financial-gateway:latest
@@ -518,7 +731,9 @@ services:
       retries: 20
     networks: [financial-internal]
     security_opt: ["no-new-privileges:true"]
-    logging: *default-logging
+    logging:
+      driver: local
+      options: {max-size: "20m", max-file: "5"}
 
 networks:
   financial-internal:
