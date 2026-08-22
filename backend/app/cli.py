@@ -6,12 +6,14 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import click
+import httpx
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
+from app.core.errors import APIError
 from app.core.security import hash_password
 from app.db.platform import PlatformSessionLocal
 from app.db.tenant import tenant_engines
@@ -38,6 +40,38 @@ def migrate_platform() -> None:
     cfg.set_main_option("script_location", str(BACKEND_ROOT / "migrations" / "platform"))
     cfg.set_main_option("sqlalchemy.url", settings.platform_database_url_sync.replace("%", "%%"))
     command.upgrade(cfg, "head")
+
+
+def _is_nonblocking_cloudflare_error(exc: Exception) -> bool:
+    if isinstance(exc, APIError):
+        return exc.code.startswith("CLOUDFLARE_")
+    if isinstance(exc, httpx.HTTPStatusError):
+        return (exc.request.url.host or "").lower() == "api.cloudflare.com"
+    return False
+
+
+async def _provision_demo_job(job_id: str) -> bool:
+    """Provisiona o tenant demo sem derrubar o boot por falha externa de DNS.
+
+    O ProvisioningService continua registrando job/tenant como FAILED quando o
+    domínio não pode ser reconciliado. Aqui apenas impedimos que essa falha
+    externa da Cloudflare encerre o container de bootstrap e bloqueie API e
+    workers. Erros de banco, storage, migrations e demais componentes continuam
+    fatais e são propagados normalmente.
+    """
+
+    try:
+        await provisioning_service.provision(job_id)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        if not _is_nonblocking_cloudflare_error(exc):
+            raise
+        detail = exc.code if isinstance(exc, APIError) else f"HTTP {exc.response.status_code}"
+        click.echo(
+            "Aviso: reconciliação Cloudflare do tenant demo ficou pendente "
+            f"({detail}); o bootstrap da plataforma continuará e o job poderá ser reprocessado."
+        )
+        return False
 
 
 async def bootstrap_async() -> None:
@@ -79,8 +113,13 @@ async def bootstrap_async() -> None:
                     ),
                     actor_id=None,
                 )
-                await provisioning_service.provision(str(job.id))
-                click.echo(f"Tenant demo provisionado: {settings.tenant_hostname(tenant.slug)}")
+                if await _provision_demo_job(str(job.id)):
+                    click.echo(f"Tenant demo provisionado: {settings.tenant_hostname(tenant.slug)}")
+                else:
+                    click.echo(
+                        f"Tenant demo preparado parcialmente e aguardando reconciliação: "
+                        f"{settings.tenant_hostname(tenant.slug)}"
+                    )
             else:
                 primary = next((item for item in tenant.domains if item.is_primary), None)
                 operational = tenant.status == "ACTIVE" and primary is not None and primary.status == "ACTIVE"
@@ -114,8 +153,13 @@ async def bootstrap_async() -> None:
                             session.add(job)
                         tenant.status = "PROVISIONING"
                         await session.commit()
-                        await provisioning_service.provision(str(job.id))
-                        click.echo(f"Tenant demo reconciliado: {settings.tenant_hostname(tenant.slug)}")
+                        if await _provision_demo_job(str(job.id)):
+                            click.echo(f"Tenant demo reconciliado: {settings.tenant_hostname(tenant.slug)}")
+                        else:
+                            click.echo(
+                                f"Tenant demo continua pendente de reconciliação externa: "
+                                f"{settings.tenant_hostname(tenant.slug)}"
+                            )
 
 
 @click.group()
