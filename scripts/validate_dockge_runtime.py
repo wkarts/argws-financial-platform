@@ -4,14 +4,18 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+
 import yaml
+from yaml.tokens import AliasToken, AnchorToken, ScalarToken
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "deployments/dockge/compose.yaml"
 ENV_EXAMPLE = ROOT / "deployments/dockge/.env.example"
 
+
 def fail(message: str) -> None:
     raise SystemExit(f"[ERRO] {message}")
+
 
 def parse_env(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
@@ -23,17 +27,30 @@ def parse_env(path: Path) -> dict[str, str]:
         values[key.strip()] = value.strip()
     return values
 
+
+def assert_plain_yaml(text: str) -> None:
+    for token in yaml.scan(text):
+        if isinstance(token, (AnchorToken, AliasToken)):
+            fail("Compose Dockge não pode conter YAML anchors/aliases; o editor do Dockge limita aliases")
+        if isinstance(token, ScalarToken) and token.value == "<<":
+            fail("Compose Dockge não pode conter YAML merge keys (<<:)")
+
+
 def main() -> int:
     text = COMPOSE.read_text(encoding="utf-8")
+    assert_plain_yaml(text)
     data = yaml.safe_load(text)
     services = data.get("services") if isinstance(data, dict) else None
     if not isinstance(services, dict):
         fail("Compose Dockge inválido ou sem services")
+    if any(isinstance(key, str) and key.startswith("x-") for key in data):
+        fail("Compose Dockge deve ser plano e não usar extensões x-* para deduplicação")
     if data.get("volumes"):
         fail("Dockge não deve usar volumes Docker nomeados; use ./data-*")
     for name, service in services.items():
         if isinstance(service, dict) and "build" in service:
             fail(f"{name} ainda depende de build local")
+
     required = {
         "financial-preflight", "financial-domain-init", "financial-storage-init", "financial-monitoring-init",
         "financial-postgres", "financial-redis", "financial-rabbitmq", "financial-minio", "financial-minio-init",
@@ -45,9 +62,18 @@ def main() -> int:
     missing = sorted(required - set(services))
     if missing:
         fail(f"Serviços ausentes no Dockge: {missing}")
+
+    preflight = services.get("financial-preflight") or {}
+    env_files = preflight.get("env_file") or []
+    if isinstance(env_files, str):
+        env_files = [env_files]
+    if ".env" not in env_files:
+        fail("financial-preflight precisa carregar .env para validar ACME/CloudPanel e integrações")
+
     publishers = [name for name, service in services.items() if isinstance(service, dict) and service.get("ports")]
     if publishers != ["financial-gateway"]:
         fail(f"Somente financial-gateway pode publicar porta; encontrado: {publishers}")
+
     expected = {
         "financial-preflight": "ghcr.io/wkarts/argws-financial-api:latest",
         "financial-domain-init": "ghcr.io/wkarts/argws-financial-api:latest",
@@ -63,15 +89,22 @@ def main() -> int:
             fail(f"{name} deve usar {image}")
         if service.get("pull_policy") != "always":
             fail(f"{name} deve usar pull_policy: always")
-    for internal in ("financial-postgres", "financial-redis", "financial-rabbitmq", "financial-minio", "financial-prometheus", "financial-grafana"):
+
+    for internal in (
+        "financial-postgres", "financial-redis", "financial-rabbitmq", "financial-minio",
+        "financial-prometheus", "financial-grafana",
+    ):
         if (services.get(internal) or {}).get("ports"):
             fail(f"{internal} não pode publicar porta no host")
+
     for folder in (
         "data-postgres", "data-redis", "data-rabbitmq", "data-minio", "data-backups", "data-runtime",
-        "data-celery", "data-prometheus", "data-grafana", "data-monitoring", "data-acme", "data-certs", "data-cloudpanel-agent",
+        "data-celery", "data-prometheus", "data-grafana", "data-monitoring", "data-acme", "data-certs",
+        "data-cloudpanel-agent",
     ):
         if folder not in text:
             fail(f"Bind mount ausente: {folder}")
+
     env = parse_env(ENV_EXAMPLE)
     expected_env = {
         "APP_NAME": "ARGWS Financial Platform",
@@ -90,8 +123,11 @@ def main() -> int:
             fail(f"{key} deve ser {value!r}, encontrado {env.get(key)!r}")
     if env.get("CLOUDFLARE_PROVISIONING_MODE") != "wildcard":
         fail("CLOUDFLARE_PROVISIONING_MODE deve ser wildcard")
+
     subprocess.run([sys.executable, str(ROOT / "scripts/validate_deployment_parity.py")], check=True)
     print("Dockge runtime: PASS")
+    print("- YAML plano sem anchors/aliases/merge keys: OK")
+    print("- financial-preflight carrega .env: OK")
     print("- branding: ARGWS Financial Platform")
     print("- domínio padrão: finance.argws.com.br")
     print("- landing/demo/control/admin/api/wildcard: OK")
@@ -100,6 +136,7 @@ def main() -> int:
     print("- Prometheus/Grafana internos: OK")
     print("- bind mounts ./data-*: OK")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
