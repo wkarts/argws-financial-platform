@@ -29,29 +29,22 @@ require_cmd python3; require_cmd tar
 TARGET="$STACKS_DIR/$STACK_NAME"
 sync_project "$ROOT" "$TARGET"
 cd "$TARGET"
-
-# O arquivo efetivamente usado pelo Dockge fica na raiz da stack. Isso também
-# garante que ./data-* seja resolvido em relação ao diretório da stack.
 cp "$TARGET/deployments/dockge/compose.yaml" "$TARGET/compose.yaml"
 cp "$TARGET/deployments/dockge/.env.example" "$TARGET/.env.example"
-
 prepare_env "$TARGET" "$TARGET/.env.example" "$TARGET/.env" "$DOMAIN" "$EMAIL"
 
-# Dockge sempre consome as imagens publicadas; nunca compila o código-fonte.
 set_env .env APP_PULL_POLICY always
 set_env .env FINANCIAL_DATA_ROOT .
 set_env .env BACKEND_IMAGE ghcr.io/wkarts/argws-financial-api:latest
 set_env .env FRONTEND_IMAGE ghcr.io/wkarts/argws-financial-web:latest
 set_env .env GATEWAY_IMAGE ghcr.io/wkarts/argws-financial-gateway:latest
-set_env .env ACME_IMAGE ghcr.io/wkarts/argws-financial-acme:latest
-set_env .env CLOUDPANEL_AGENT_IMAGE ghcr.io/wkarts/argws-financial-cloudpanel-agent:latest
 
-# Persistência explícita e auditável dentro da pasta da stack.
-mkdir -p \
-  data-postgres data-redis data-rabbitmq data-minio \
-  data-backups data-runtime data-celery secrets
+mkdir -p data-postgres data-redis data-rabbitmq data-minio data-backups data-runtime data-celery secrets
+touch secrets/rclone.conf secrets/backup-age-identity.txt
 chmod 0777 data-postgres data-redis data-rabbitmq data-minio
 chmod 0770 data-backups data-runtime data-celery
+chmod 0700 secrets
+chmod 0600 secrets/rclone.conf secrets/backup-age-identity.txt
 
 export COMPOSE_FILE_PATH="compose.yaml"
 validate_project "$TARGET" true
@@ -61,16 +54,21 @@ if ! $SKIP_UP; then
   docker compose version >/dev/null || die "Docker Compose v2 ausente"
   compose_cmd .env config --quiet
   compose_cmd .env pull
-  compose_cmd .env up -d --remove-orphans
+  compose_cmd .env up -d --remove-orphans || {
+    compose_cmd .env ps || true
+    compose_cmd .env logs --tail=250 financial-preflight financial-migrate financial-minio-init financial-bootstrap || true
+    die "Stack Dockge falhou durante preflight/migration/bootstrap"
+  }
   wait_ready "$(get_env .env GATEWAY_PORT)" || {
     compose_cmd .env ps || true
-    compose_cmd .env logs --tail=250 financial-api financial-migrate financial-bootstrap || true
+    compose_cmd .env logs --tail=250 financial-preflight financial-migrate financial-api financial-bootstrap || true
     die "Stack Dockge não ficou saudável"
   }
 fi
 
 log "Stack preparada em $TARGET"
 log "Persistência local: $TARGET/data-*"
+log "Única porta publicada: 127.0.0.1:$(get_env .env GATEWAY_PORT) -> financial-gateway"
 log "No Dockge, use Scan Stacks Folder e abra '$STACK_NAME'."
 printf 'Gateway local: http://127.0.0.1:%s\nControl Plane: https://control.%s\nTenant: https://<slug>.%s\nCredenciais: %s/.bootstrap-credentials.txt\n' \
   "$(get_env .env GATEWAY_PORT)" "$DOMAIN" "$DOMAIN" "$TARGET"
