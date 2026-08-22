@@ -139,8 +139,8 @@ jobs:
         run: $COMPOSE up -d --build --remove-orphans
       - name: Verify only gateway publishes a host port
         run: |
-          published="$($COMPOSE ps --format json | jq -r 'select(.Publishers != null) | .Publishers[]? | select(.PublishedPort != 0) | .Name' | sort -u)"
-          test "$published" = "argws-financial-platform-financial-gateway-1" || {
+          published="$($COMPOSE ps --format json | jq -r 'select(any(.Publishers[]?; (.PublishedPort // 0) != 0)) | .Service' | sort -u)"
+          test "$published" = "financial-gateway" || {
             echo "Unexpected host publishers: $published"
             $COMPOSE ps
             exit 1
