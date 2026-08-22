@@ -4,6 +4,7 @@ import asyncio
 import json
 
 from app.core.config import settings
+from app.core.errors import APIError
 from app.providers.cloudflare import CloudflareDNSProvider
 
 
@@ -26,8 +27,35 @@ async def reconcile_managed_wildcard() -> dict[str, str | bool]:
     }
 
 
+def _degraded_report(exc: Exception) -> dict[str, object]:
+    if isinstance(exc, APIError):
+        return {
+            "status": "DEGRADED",
+            "component": "cloudflare_wildcard",
+            "blocking": False,
+            "error": {
+                "code": exc.code,
+                "message": exc.message,
+                "details": exc.details,
+            },
+        }
+    return {
+        "status": "DEGRADED",
+        "component": "cloudflare_wildcard",
+        "blocking": False,
+        "error": {
+            "code": exc.__class__.__name__,
+            "message": str(exc),
+            "details": {},
+        },
+    }
+
+
 async def main() -> int:
-    report = await reconcile_managed_wildcard()
+    try:
+        report = await reconcile_managed_wildcard()
+    except Exception as exc:  # falha externa de DNS não deve impedir o boot da plataforma
+        report = _degraded_report(exc)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
