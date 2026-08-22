@@ -43,7 +43,7 @@ sync_runtime_version() {
   version="$(canonical_version "$root")"
   set_env "$env_file" APP_VERSION "$version"
   set_env "$env_file" VITE_APP_VERSION "$version"
-  log "Versão sincronizada do arquivo VERSION: $version"
+  log "Versão sincronizada automaticamente do arquivo VERSION: $version"
 }
 
 sync_project() {
@@ -51,16 +51,25 @@ sync_project() {
   mkdir -p "$target"
   if [[ "$(realpath "$root")" == "$(realpath "$target")" ]]; then return 0; fi
   tar --exclude='.git' --exclude='.env' --exclude='.bootstrap-credentials.txt' \
-      --exclude='financial-data' --exclude='node_modules' --exclude='dist' \
-      --exclude='__pycache__' --exclude='.pytest_cache' --exclude='.releases' \
+      --exclude='node_modules' --exclude='dist' --exclude='__pycache__' \
+      --exclude='.pytest_cache' --exclude='.releases' --exclude='release-artifacts' \
+      --exclude='data-postgres' --exclude='data-redis' --exclude='data-rabbitmq' \
+      --exclude='data-minio' --exclude='data-backups' --exclude='data-runtime' \
+      --exclude='data-celery' --exclude='data-prometheus' --exclude='data-grafana' \
+      --exclude='data-monitoring' --exclude='data-acme' --exclude='data-certs' \
+      --exclude='data-cloudpanel-agent' \
       -C "$root" -cf - . | tar -C "$target" -xf -
 }
 
 compose_profiles() {
-  local env_file="$1" profiles=()
+  local env_file="$1" explicit profiles=()
+  explicit="$(get_env "$env_file" COMPOSE_PROFILES || true)"
+  if [[ -n "$explicit" ]]; then
+    printf '%s' "$explicit"
+    return 0
+  fi
   [[ "$(get_env "$env_file" ACME_ENABLED || true)" == "true" ]] && profiles+=(cloudpanel)
   [[ "$(get_env "$env_file" CLOUDPANEL_AGENT_ENABLED || true)" == "true" ]] && profiles+=(cloudpanel)
-  [[ "$(get_env "$env_file" MONITORING_ENABLED || true)" == "true" ]] && profiles+=(monitoring)
   if ((${#profiles[@]})); then local IFS=,; printf '%s' "${profiles[*]}"; fi
 }
 
@@ -78,7 +87,7 @@ compose_cmd() {
 wait_ready() {
   local port="$1" attempts="${2:-120}" sleep_seconds="${3:-2}" i
   for ((i=1;i<=attempts;i++)); do
-    if curl -fsS "http://127.0.0.1:${port}/health/ready" >/dev/null 2>&1; then
+    if curl -fsS -H 'Host: api.finance.argws.com.br' "http://127.0.0.1:${port}/health/ready" >/dev/null 2>&1; then
       log "Readiness confirmado em 127.0.0.1:${port}"
       return 0
     fi
@@ -88,16 +97,29 @@ wait_ready() {
 }
 
 ensure_runtime_files() {
-  local root="$1" env_file="$2"
-  mkdir -p "$root/secrets" "$root/financial-data" "$root/.releases"
-  local rclone age
+  local root="$1" env_file="$2" configured_data_root data_root rclone age
+  configured_data_root="$(get_env "$env_file" FINANCIAL_DATA_ROOT || true)"
+  configured_data_root="${configured_data_root:-.}"
+  if [[ "$configured_data_root" == /* ]]; then
+    data_root="$configured_data_root"
+  else
+    data_root="$root/${configured_data_root#./}"
+  fi
+  mkdir -p "$root/secrets" "$root/.releases"
+  for folder in postgres redis rabbitmq minio backups runtime celery prometheus grafana monitoring acme certs cloudpanel-agent; do
+    mkdir -p "$data_root/data-$folder"
+  done
   rclone="$(get_env "$env_file" RCLONE_CONFIG_PATH || true)"
   age="$(get_env "$env_file" BACKUP_AGE_IDENTITY_PATH || true)"
   if [[ -n "$rclone" && "$rclone" != /* ]]; then rclone="$root/${rclone#./}"; fi
   if [[ -n "$age" && "$age" != /* ]]; then age="$root/${age#./}"; fi
   if [[ -n "$rclone" && ! -e "$rclone" ]]; then
     mkdir -p "$(dirname "$rclone")"
-    cp "$root/infrastructure/backup/rclone.conf.example" "$rclone"
+    if [[ -f "$root/infrastructure/backup/rclone.conf.example" ]]; then
+      cp "$root/infrastructure/backup/rclone.conf.example" "$rclone"
+    else
+      : > "$rclone"
+    fi
     chmod 0600 "$rclone"
   fi
   if [[ -n "$age" && ! -e "$age" ]]; then
@@ -111,19 +133,29 @@ prepare_env() {
   local root="$1" env_example="$2" env_file="$3" domain="$4" email="$5"
   [[ -f "$env_file" ]] || cp "$env_example" "$env_file"
   local zone="${domain#*.}"
+  set_env "$env_file" APP_NAME "ARGWS Financial Platform"
+  set_env "$env_file" VITE_APP_NAME "ARGWS Financial Platform"
   set_env "$env_file" PLATFORM_DOMAIN "$domain"
   set_env "$env_file" CONTROL_PLANE_HOST "control.$domain"
+  set_env "$env_file" ADMIN_HOST "admin.$domain"
   set_env "$env_file" API_HOST "api.$domain"
+  set_env "$env_file" DEMO_HOST "demo.$domain"
   set_env "$env_file" TENANT_DOMAIN_ROOT "$domain"
   set_env "$env_file" PLATFORM_ADMIN_EMAIL "$email"
+  set_env "$env_file" BOOTSTRAP_DEMO_TENANT true
+  set_env "$env_file" DEMO_TENANT_SLUG demo
+  set_env "$env_file" DEMO_TENANT_ADMIN_EMAIL "admin.demo@$domain"
   set_env "$env_file" ACME_EMAIL "$email"
   set_env "$env_file" ACME_DOMAIN "$domain"
+  set_env "$env_file" CLOUDPANEL_SITE_DOMAIN "$domain"
+  set_env "$env_file" CLOUDPANEL_WILDCARD_DOMAIN "*.$domain"
   set_env "$env_file" CLOUDFLARE_ZONE_NAME "$zone"
-  set_env "$env_file" CLOUDFLARE_TENANT_RECORD_TARGET "$domain"
-  set_env "$env_file" SMTP_FROM_EMAIL "financeiro@$zone"
+  set_env "$env_file" CLOUDFLARE_TENANT_RECORD_TARGET "proxy.$domain"
+  set_env "$env_file" SMTP_FROM_EMAIL "no-reply@$domain"
   set_env "$env_file" VITE_CONTROL_PLANE_HOST "control.$domain"
-  set_env "$env_file" TRUSTED_HOSTS "$domain,control.$domain,api.$domain,.$domain,localhost,127.0.0.1"
-  set_env "$env_file" CORS_ORIGINS "https://$domain,https://control.$domain"
+  set_env "$env_file" TRUSTED_HOSTS "$domain,control.$domain,admin.$domain,api.$domain,demo.$domain,.$domain,localhost,127.0.0.1"
+  set_env "$env_file" CORS_ORIGINS "https://$domain,https://control.$domain,https://admin.$domain,https://demo.$domain"
+  set_env "$env_file" GRAFANA_ROOT_URL "http://financial-grafana:3000"
   sync_runtime_version "$root" "$env_file"
   python3 "$root/scripts/generate_secrets.py" --env "$env_file"
   chmod 0600 "$env_file"

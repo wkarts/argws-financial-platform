@@ -1,11 +1,11 @@
 name: ${COMPOSE_PROJECT_NAME:-argws-financial-platform}
 
-# Runtime canônico de deploy.
-# - nenhuma aplicação é compilada no servidor;
-# - imagens do produto vêm sempre do GHCR;
-# - somente o gateway publica porta no host;
-# - serviços internos permanecem acessíveis apenas pela rede Docker da stack;
-# - persistência fica em ./data-* por padrão.
+# ARGWS Financial Platform — runtime canônico de produção.
+# - todos os deployments usam imagens publicadas no GHCR;
+# - somente financial-gateway publica porta no host;
+# - Postgres, Redis, RabbitMQ, MinIO, Prometheus e Grafana ficam apenas na rede interna;
+# - persistência fica em ./data-* por padrão;
+# - build local existe exclusivamente em compose.local-build.yaml.
 
 x-logging: &default-logging
   driver: local
@@ -21,57 +21,53 @@ x-api-env: &api-env
   APP_SECRET_KEY: ${APP_SECRET_KEY:?APP_SECRET_KEY obrigatória}
   FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:?FIELD_ENCRYPTION_KEY obrigatória}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
-  PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:?PLATFORM_DOMAIN obrigatório}
-  CONTROL_PLANE_HOST: ${CONTROL_PLANE_HOST:?CONTROL_PLANE_HOST obrigatório}
-  API_HOST: ${API_HOST:?API_HOST obrigatório}
-  TENANT_DOMAIN_ROOT: ${TENANT_DOMAIN_ROOT:?TENANT_DOMAIN_ROOT obrigatório}
+  PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:-finance.argws.com.br}
+  CONTROL_PLANE_HOST: ${CONTROL_PLANE_HOST:-control.finance.argws.com.br}
+  API_HOST: ${API_HOST:-api.finance.argws.com.br}
+  TENANT_DOMAIN_ROOT: ${TENANT_DOMAIN_ROOT:-finance.argws.com.br}
   PUBLIC_SCHEME: ${PUBLIC_SCHEME:-https}
-  TRUSTED_HOSTS: ${TRUSTED_HOSTS:-${PLATFORM_DOMAIN},${CONTROL_PLANE_HOST},${API_HOST},.${TENANT_DOMAIN_ROOT},localhost,127.0.0.1}
-  CORS_ORIGINS: ${CORS_ORIGINS:-https://${PLATFORM_DOMAIN},https://${CONTROL_PLANE_HOST}}
+  TRUSTED_HOSTS: ${TRUSTED_HOSTS:-finance.argws.com.br,control.finance.argws.com.br,admin.finance.argws.com.br,api.finance.argws.com.br,demo.finance.argws.com.br,.finance.argws.com.br,localhost,127.0.0.1}
+  CORS_ORIGINS: ${CORS_ORIGINS:-https://finance.argws.com.br,https://control.finance.argws.com.br,https://admin.finance.argws.com.br,https://demo.finance.argws.com.br}
   POSTGRES_HOST: financial-postgres
-  POSTGRES_PORT: 5432
+  POSTGRES_PORT: "5432"
   POSTGRES_DB: ${POSTGRES_DB:-financial_platform}
   POSTGRES_USER: ${POSTGRES_USER:-financial_admin}
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obrigatória}
-  POSTGRES_ADMIN_USER: ${POSTGRES_ADMIN_USER:-${POSTGRES_USER:-financial_admin}}
-  POSTGRES_ADMIN_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-${POSTGRES_PASSWORD:?POSTGRES_PASSWORD obrigatória}}
+  POSTGRES_ADMIN_USER: ${POSTGRES_ADMIN_USER:-financial_admin}
+  POSTGRES_ADMIN_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?POSTGRES_ADMIN_PASSWORD obrigatória}
   POSTGRES_POOL_SIZE: ${POSTGRES_POOL_SIZE:-20}
   POSTGRES_MAX_OVERFLOW: ${POSTGRES_MAX_OVERFLOW:-20}
   TENANT_DB_PREFIX: ${TENANT_DB_PREFIX:-fin_tenant}
   TENANT_DB_USER_PREFIX: ${TENANT_DB_USER_PREFIX:-fin_t}
-  REDIS_URL: ${REDIS_URL:-redis://financial-redis:6379/0}
+  REDIS_URL: redis://financial-redis:6379/0
   REDIS_CACHE_TTL_SECONDS: ${REDIS_CACHE_TTL_SECONDS:-300}
-  RABBITMQ_USER: ${RABBITMQ_USER:-financial}
-  RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}
-  RABBITMQ_URL: ${RABBITMQ_URL:-amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD}@financial-rabbitmq:5672/financial}
-  CELERY_BROKER_URL: ${CELERY_BROKER_URL:-amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD}@financial-rabbitmq:5672/financial}
-  CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://financial-redis:6379/1}
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+  CELERY_BROKER_URL: amqp://${RABBITMQ_USER:-financial}:${RABBITMQ_PASSWORD:?RABBITMQ_PASSWORD obrigatória}@financial-rabbitmq:5672/financial
+  CELERY_RESULT_BACKEND: redis://financial-redis:6379/1
   CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER:-false}
   PROVISIONING_ASYNC: ${PROVISIONING_ASYNC:-true}
-  S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-http://financial-minio:9000}
+  S3_ENDPOINT_URL: http://financial-minio:9000
   S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-}
   S3_REGION: ${S3_REGION:-sa-east-1}
-  S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY obrigatória}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-financial}
   S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY obrigatória}
   S3_USE_SSL: ${S3_USE_SSL:-false}
   S3_BUCKET_PREFIX: ${S3_BUCKET_PREFIX:-financial-tenant}
-  MINIO_ROOT_USER: ${MINIO_ROOT_USER:-financial}
-  MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD obrigatória}
   PLATFORM_ADMIN_NAME: ${PLATFORM_ADMIN_NAME:-Administrador da Plataforma}
   PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:?PLATFORM_ADMIN_EMAIL obrigatório}
   PLATFORM_ADMIN_PASSWORD: ${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD obrigatória}
-  BOOTSTRAP_DEMO_TENANT: ${BOOTSTRAP_DEMO_TENANT:-false}
+  BOOTSTRAP_DEMO_TENANT: ${BOOTSTRAP_DEMO_TENANT:-true}
   DEMO_TENANT_NAME: ${DEMO_TENANT_NAME:-Empresa Demonstração}
   DEMO_TENANT_SLUG: ${DEMO_TENANT_SLUG:-demo}
   DEMO_TENANT_ADMIN_NAME: ${DEMO_TENANT_ADMIN_NAME:-Administrador Demo}
-  DEMO_TENANT_ADMIN_EMAIL: ${DEMO_TENANT_ADMIN_EMAIL:-admin.demo@example.com}
+  DEMO_TENANT_ADMIN_EMAIL: ${DEMO_TENANT_ADMIN_EMAIL:-admin.demo@finance.argws.com.br}
   DEMO_TENANT_ADMIN_PASSWORD: ${DEMO_TENANT_ADMIN_PASSWORD:-}
   CLOUDFLARE_ENABLED: ${CLOUDFLARE_ENABLED:-false}
   CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
   CLOUDFLARE_ZONE_ID: ${CLOUDFLARE_ZONE_ID:-}
-  CLOUDFLARE_ZONE_NAME: ${CLOUDFLARE_ZONE_NAME:-}
-  CLOUDFLARE_PROXIED: ${CLOUDFLARE_PROXIED:-true}
-  CLOUDFLARE_TENANT_RECORD_TARGET: ${CLOUDFLARE_TENANT_RECORD_TARGET:-${PLATFORM_DOMAIN}}
+  CLOUDFLARE_ZONE_NAME: ${CLOUDFLARE_ZONE_NAME:-argws.com.br}
+  CLOUDFLARE_PROXIED: ${CLOUDFLARE_PROXIED:-false}
+  CLOUDFLARE_TENANT_RECORD_TARGET: ${CLOUDFLARE_TENANT_RECORD_TARGET:-proxy.finance.argws.com.br}
   CLOUDFLARE_PROVISIONING_MODE: ${CLOUDFLARE_PROVISIONING_MODE:-wildcard}
   DOMAIN_RECONCILIATION_TOKEN: ${DOMAIN_RECONCILIATION_TOKEN:?DOMAIN_RECONCILIATION_TOKEN obrigatória}
   SMTP_ENABLED: ${SMTP_ENABLED:-false}
@@ -92,6 +88,7 @@ x-api-env: &api-env
   EVOLUTION_WEBHOOK_SECRET: ${EVOLUTION_WEBHOOK_SECRET:-}
   EVOLUTION_TIMEOUT_SECONDS: ${EVOLUTION_TIMEOUT_SECONDS:-30}
   BANKING_WEBHOOK_SECRET: ${BANKING_WEBHOOK_SECRET:?BANKING_WEBHOOK_SECRET obrigatória}
+  WEBHOOK_MAX_AGE_SECONDS: ${WEBHOOK_MAX_AGE_SECONDS:-300}
   BACKUP_ENABLED: ${BACKUP_ENABLED:-true}
   BACKUP_DIR: /data/backups
   BACKUP_CRON: ${BACKUP_CRON:-0 2 * * *}
@@ -115,11 +112,10 @@ x-api-env: &api-env
   LOGIN_MAX_ATTEMPTS: ${LOGIN_MAX_ATTEMPTS:-8}
   LOGIN_LOCK_MINUTES: ${LOGIN_LOCK_MINUTES:-15}
   RATE_LIMIT_DEFAULT: ${RATE_LIMIT_DEFAULT:-120/minute}
-  WEBHOOK_MAX_AGE_SECONDS: ${WEBHOOK_MAX_AGE_SECONDS:-300}
   ALLOW_DEV_TENANT_HEADER: ${ALLOW_DEV_TENANT_HEADER:-false}
   PROMETHEUS_ENABLED: ${PROMETHEUS_ENABLED:-true}
 
-x-api-common: &api-common
+x-app: &app
   image: ghcr.io/wkarts/argws-financial-api:latest
   pull_policy: always
   restart: unless-stopped
@@ -144,13 +140,25 @@ services:
     security_opt: ["no-new-privileges:true"]
     logging: *default-logging
 
+  financial-domain-init:
+    image: ghcr.io/wkarts/argws-financial-api:latest
+    pull_policy: always
+    restart: "no"
+    environment: *api-env
+    command: ["python", "-m", "app.domain_bootstrap"]
+    depends_on:
+      financial-preflight: {condition: service_completed_successfully}
+    networks: [financial-internal]
+    security_opt: ["no-new-privileges:true"]
+    logging: *default-logging
+
   financial-storage-init:
     image: alpine:3.22
     restart: "no"
     user: "0:0"
     network_mode: none
     depends_on:
-      financial-preflight: {condition: service_completed_successfully}
+      financial-domain-init: {condition: service_completed_successfully}
     volumes:
       - ${FINANCIAL_DATA_ROOT:-.}/data-postgres:/data/postgres
       - ${FINANCIAL_DATA_ROOT:-.}/data-redis:/data/redis
@@ -159,17 +167,63 @@ services:
       - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
       - ${FINANCIAL_DATA_ROOT:-.}/data-runtime:/data/runtime
       - ${FINANCIAL_DATA_ROOT:-.}/data-celery:/data/celery
+      - ${FINANCIAL_DATA_ROOT:-.}/data-prometheus:/data/prometheus
+      - ${FINANCIAL_DATA_ROOT:-.}/data-grafana:/data/grafana
+      - ${FINANCIAL_DATA_ROOT:-.}/data-monitoring:/data/monitoring
+      - ${FINANCIAL_DATA_ROOT:-.}/data-acme:/data/acme
+      - ${FINANCIAL_DATA_ROOT:-.}/data-certs:/data/certs
+      - ${FINANCIAL_DATA_ROOT:-.}/data-cloudpanel-agent:/data/cloudpanel-agent
       - ${FINANCIAL_DATA_ROOT:-.}/secrets:/secrets
     command:
       - /bin/sh
       - -ec
       - |
-          mkdir -p /data/postgres /data/redis /data/rabbitmq /data/minio /data/backups /data/runtime /data/celery /secrets
+          mkdir -p /data/postgres /data/redis /data/rabbitmq /data/minio \
+            /data/backups /data/runtime /data/celery /data/prometheus \
+            /data/grafana /data/monitoring /data/acme /data/certs \
+            /data/cloudpanel-agent /secrets
           touch /secrets/rclone.conf /secrets/backup-age-identity.txt
-          chmod 0777 /data/postgres /data/redis /data/rabbitmq /data/minio
-          chmod 0770 /data/backups /data/runtime /data/celery
+          chmod 0777 /data/postgres /data/redis /data/rabbitmq /data/minio /data/prometheus /data/grafana
+          chmod 0770 /data/backups /data/runtime /data/celery /data/monitoring
+          chmod 0750 /data/acme /data/certs /data/cloudpanel-agent
           chmod 0700 /secrets
           chmod 0600 /secrets/rclone.conf /secrets/backup-age-identity.txt
+    logging: *default-logging
+
+  financial-monitoring-init:
+    image: alpine:3.22
+    restart: "no"
+    network_mode: none
+    depends_on:
+      financial-storage-init: {condition: service_completed_successfully}
+    volumes:
+      - ${FINANCIAL_DATA_ROOT:-.}/data-monitoring:/config
+    command:
+      - /bin/sh
+      - -ec
+      - |
+          mkdir -p /config/grafana/provisioning/datasources
+          cat >/config/prometheus.yml <<'EOF'
+          global:
+            scrape_interval: 15s
+            evaluation_interval: 15s
+          scrape_configs:
+            - job_name: argws-financial-api
+              metrics_path: /metrics
+              static_configs:
+                - targets: ["financial-api:8000"]
+          EOF
+          cat >/config/grafana/provisioning/datasources/prometheus.yml <<'EOF'
+          apiVersion: 1
+          datasources:
+            - name: Prometheus
+              uid: prometheus
+              type: prometheus
+              access: proxy
+              url: http://financial-prometheus:9090
+              isDefault: true
+              editable: false
+          EOF
     logging: *default-logging
 
   financial-postgres:
@@ -272,7 +326,7 @@ services:
     logging: *default-logging
 
   financial-migrate:
-    <<: *api-common
+    <<: *app
     restart: "no"
     command: ["python", "-m", "app.cli", "migrate-platform"]
     depends_on:
@@ -280,14 +334,14 @@ services:
       financial-postgres: {condition: service_healthy}
 
   financial-migrate-tenants:
-    <<: *api-common
+    <<: *app
     restart: "no"
     command: ["python", "-m", "app.cli", "migrate-all-tenants"]
     depends_on:
       financial-migrate: {condition: service_completed_successfully}
 
   financial-bootstrap:
-    <<: *api-common
+    <<: *app
     restart: "no"
     command: ["python", "-m", "app.cli", "bootstrap"]
     depends_on:
@@ -297,7 +351,7 @@ services:
       financial-rabbitmq: {condition: service_healthy}
 
   financial-api:
-    <<: *api-common
+    <<: *app
     command: ["gunicorn", "app.main:app", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--workers", "${API_WORKERS:-2}", "--timeout", "120", "--graceful-timeout", "30", "--access-logfile", "-"]
     depends_on:
       financial-bootstrap: {condition: service_completed_successfully}
@@ -309,31 +363,31 @@ services:
       start_period: 30s
 
   financial-worker-default:
-    <<: *api-common
+    <<: *app
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.default,financial.provisioning,financial.outbox", "--loglevel=INFO", "--concurrency=${CELERY_DEFAULT_CONCURRENCY:-2}", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
       financial-api: {condition: service_healthy}
 
   financial-worker-billing:
-    <<: *api-common
+    <<: *app
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.billing,financial.banking,financial.cnab,financial.reconciliation", "--loglevel=INFO", "--concurrency=${CELERY_BILLING_CONCURRENCY:-2}", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
       financial-api: {condition: service_healthy}
 
   financial-worker-notifications:
-    <<: *api-common
+    <<: *app
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.notifications,financial.webhooks", "--loglevel=INFO", "--concurrency=${CELERY_NOTIFICATION_CONCURRENCY:-2}", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
       financial-api: {condition: service_healthy}
 
   financial-worker-backups:
-    <<: *api-common
+    <<: *app
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "worker", "-Q", "financial.backups,financial.exports", "--loglevel=INFO", "--concurrency=1", "--without-gossip", "--without-mingle", "--without-heartbeat"]
     depends_on:
       financial-api: {condition: service_healthy}
 
   financial-beat:
-    <<: *api-common
+    <<: *app
     command: ["celery", "-A", "app.workers.celery_app:celery_app", "beat", "--loglevel=INFO", "--schedule=/var/lib/celery/celerybeat-schedule", "--pidfile=/tmp/celerybeat.pid"]
     volumes:
       - ${FINANCIAL_DATA_ROOT:-.}/data-backups:/data/backups
@@ -359,6 +413,88 @@ services:
     security_opt: ["no-new-privileges:true"]
     logging: *default-logging
 
+  financial-prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    depends_on:
+      financial-monitoring-init: {condition: service_completed_successfully}
+      financial-api: {condition: service_healthy}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+    volumes:
+      - ${FINANCIAL_DATA_ROOT:-.}/data-monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${FINANCIAL_DATA_ROOT:-.}/data-prometheus:/prometheus
+    networks: [financial-internal]
+    security_opt: ["no-new-privileges:true"]
+    logging: *default-logging
+
+  financial-grafana:
+    image: grafana/grafana:12.1.0
+    restart: unless-stopped
+    depends_on:
+      financial-prometheus: {condition: service_started}
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD obrigatória}
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://financial-grafana:3000}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ${FINANCIAL_DATA_ROOT:-.}/data-grafana:/var/lib/grafana
+      - ${FINANCIAL_DATA_ROOT:-.}/data-monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks: [financial-internal]
+    security_opt: ["no-new-privileges:true"]
+    logging: *default-logging
+
+  financial-acme:
+    profiles: ["cloudpanel"]
+    image: ghcr.io/wkarts/argws-financial-acme:latest
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      financial-storage-init: {condition: service_completed_successfully}
+    environment:
+      CF_Token: ${CLOUDFLARE_API_TOKEN:-}
+      ACME_DOMAIN: ${ACME_DOMAIN:-finance.argws.com.br}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+      ACME_STAGING: ${ACME_STAGING:-false}
+      ACME_DNS_SLEEP: ${ACME_DNS_SLEEP:-20}
+      ACME_CHECK_INTERVAL_SECONDS: ${ACME_CHECK_INTERVAL_SECONDS:-43200}
+    volumes:
+      - ${FINANCIAL_DATA_ROOT:-.}/data-acme:/acme.sh
+      - ${FINANCIAL_DATA_ROOT:-.}/data-certs:/certs
+    networks: [financial-internal]
+    security_opt: ["no-new-privileges:true"]
+    logging: *default-logging
+
+  financial-cloudpanel-agent:
+    profiles: ["cloudpanel"]
+    image: ghcr.io/wkarts/argws-financial-cloudpanel-agent:latest
+    pull_policy: always
+    restart: unless-stopped
+    user: "0:0"
+    privileged: true
+    pid: host
+    network_mode: host
+    read_only: true
+    depends_on:
+      financial-acme: {condition: service_started}
+    environment:
+      HOST_ROOT: /host
+      CERT_DIR: /certs
+      STATE_DIR: /state
+      CLOUDPANEL_SITE_DOMAIN: ${CLOUDPANEL_SITE_DOMAIN:-finance.argws.com.br}
+      CLOUDPANEL_WILDCARD_DOMAIN: ${CLOUDPANEL_WILDCARD_DOMAIN:-*.finance.argws.com.br}
+      CLOUDPANEL_SYNC_INTERVAL_SECONDS: ${CLOUDPANEL_SYNC_INTERVAL_SECONDS:-60}
+    volumes:
+      - /:/host:rw
+      - ${FINANCIAL_DATA_ROOT:-.}/data-certs:/certs:rw
+      - ${FINANCIAL_DATA_ROOT:-.}/data-cloudpanel-agent:/state:rw
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    logging: *default-logging
+
   financial-gateway:
     image: ghcr.io/wkarts/argws-financial-gateway:latest
     pull_policy: always
@@ -366,10 +502,17 @@ services:
     depends_on:
       financial-api: {condition: service_healthy}
       financial-web: {condition: service_healthy}
+    environment:
+      PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:-finance.argws.com.br}
+      CONTROL_PLANE_HOST: ${CONTROL_PLANE_HOST:-control.finance.argws.com.br}
+      ADMIN_HOST: ${ADMIN_HOST:-admin.finance.argws.com.br}
+      API_HOST: ${API_HOST:-api.finance.argws.com.br}
+      DEMO_HOST: ${DEMO_HOST:-demo.finance.argws.com.br}
+      TENANT_DOMAIN_ROOT: ${TENANT_DOMAIN_ROOT:-finance.argws.com.br}
     ports:
-      - "${GATEWAY_BIND_IP:-127.0.0.1}:${GATEWAY_PORT:-8800}:80"
+      - ${GATEWAY_BIND_IP:-127.0.0.1}:${GATEWAY_PORT:-18800}:80
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/health/live"]
+      test: ["CMD-SHELL", "wget -q --spider --header=\"Host: $${API_HOST}\" http://127.0.0.1/health/live"]
       interval: 15s
       timeout: 5s
       retries: 20

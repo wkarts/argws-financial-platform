@@ -17,8 +17,8 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
           cache: pip
@@ -40,8 +40,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
       - run: npm install --no-audit --no-fund
@@ -56,8 +56,8 @@ jobs:
   structure:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
       - run: pip install PyYAML SQLAlchemy pydantic pydantic-settings cryptography email-validator
@@ -95,7 +95,7 @@ jobs:
           - name: cloudpanel-agent
             dockerfile: infrastructure/cloudpanel-agent/Dockerfile
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
@@ -113,8 +113,8 @@ jobs:
     env:
       COMPOSE: docker compose --env-file .env -f compose.yaml -f compose.local-build.yaml
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
       - name: Prepare isolated smoke environment
@@ -169,12 +169,18 @@ jobs:
             grep -Fxq "$service" <<<"$running" || {
               echo "Worker/beat não permaneceu em execução: $service"
               $COMPOSE ps
+              $COMPOSE logs --no-color --tail=200 "$service"
               exit 1
             }
           done
-          logs="$($COMPOSE logs --no-color --tail=300 financial-worker-default financial-worker-billing financial-worker-notifications financial-worker-backups financial-rabbitmq)"
+          logs="$($COMPOSE logs --no-color --tail=300 financial-worker-default financial-worker-billing financial-worker-notifications financial-worker-backups financial-beat financial-rabbitmq)"
           if grep -q 'transient_nonexcl_queues' <<<"$logs"; then
             echo "Celery ainda acionou filas transitórias incompatíveis com RabbitMQ 4"
+            printf '%s\n' "$logs"
+            exit 1
+          fi
+          if grep -q 'PermissionError.*celerybeat-schedule' <<<"$logs"; then
+            echo "Celery Beat não conseguiu gravar o arquivo de schedule"
             printf '%s\n' "$logs"
             exit 1
           fi

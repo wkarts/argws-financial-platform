@@ -58,6 +58,11 @@ services:
     build: *local-api-build
     image: argws-financial-api:local
     pull_policy: build
+    # Em CI/desenvolvimento os bind mounts podem ser criados pelo usuário do host,
+    # portanto /var/lib/celery pode não ser gravável pelo UID 10001 do runtime.
+    # O estado do beat local é efêmero e fica em /tmp; produção continua usando
+    # o diretório persistente preparado pelos instaladores root/Dockge.
+    command: ["celery", "-A", "app.workers.celery_app:celery_app", "beat", "--loglevel=INFO", "--schedule=/tmp/celerybeat-schedule", "--pidfile=/tmp/celerybeat.pid"]
 
   financial-web:
     build:

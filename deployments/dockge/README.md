@@ -1,142 +1,44 @@
-# Deploy Dockge + CloudPanel
+# ARGWS Financial Platform — Dockge / CloudPanel
 
-O runtime de produção da ARGWS Financeiro é **image-only**. O servidor nunca compila backend, frontend ou gateway: todos os componentes da aplicação são consumidos do GHCR com `:latest` e `pull_policy: always`.
+Runtime de produção **image-only**. O servidor não compila backend, frontend ou gateway.
 
-## Contrato de exposição
+## Domínios padrão
 
-A stack publica somente:
+- Landing: `https://finance.argws.com.br`
+- Demonstração: `https://demo.finance.argws.com.br`
+- Control Plane: `https://control.finance.argws.com.br`
+- Alias administrativo: `https://admin.finance.argws.com.br`
+- API: `https://api.finance.argws.com.br`
+- Tenants: `https://<slug-ou-hash>.finance.argws.com.br`
 
-```text
-127.0.0.1:${GATEWAY_PORT}:80
-```
+O Cloudflare usa `*.finance.argws.com.br`; o CloudPanel precisa de apenas um Reverse Proxy para `finance.argws.com.br -> http://127.0.0.1:GATEWAY_PORT`.
 
-PostgreSQL, Redis, RabbitMQ, MinIO, API, workers, ACME e os demais componentes não publicam portas no host. O `financial-cloudpanel-agent` usa o namespace do host apenas para reconciliar o NGINX/CloudPanel e não abre listener próprio.
+## Rede
 
-## Única ação manual no CloudPanel
+Somente `financial-gateway` publica porta no host. PostgreSQL, Redis, RabbitMQ, MinIO, Prometheus, Grafana, API e workers ficam na rede `financial-internal`.
 
-Crie um único **Reverse Proxy** para o domínio principal:
+## Observabilidade
 
-```text
-financeiro.seu-dominio.com.br
-    ->
-http://127.0.0.1:18800
-```
+Prometheus e Grafana fazem parte da stack e permanecem internos. Acesso operacional excepcional deve ocorrer por túnel/VPN ou, futuramente, pelo Control Plane — nunca por portas administrativas permanentemente publicadas.
 
-Preserve o header `Host`. Depois dessa criação a stack assume o restante:
+## Persistência
 
-```text
-Cloudflare API
-    ├── proxy.financeiro.seu-dominio.com.br  -> origem real (DNS-only)
-    └── *.financeiro.seu-dominio.com.br      -> proxy... (DNS-only)
-                    ↓
-ACME DNS-01
-    ├── financeiro.seu-dominio.com.br
-    └── *.financeiro.seu-dominio.com.br
-                    ↓
-financial-cloudpanel-agent
-    ├── adiciona wildcard ao server_name
-    ├── valida nginx -t
-    ├── instala certificado via clpctl
-    ├── reconcilia o VHost novamente
-    └── recarrega o NGINX
-```
+Os dados ficam ao lado da stack em `data-postgres`, `data-redis`, `data-rabbitmq`, `data-minio`, `data-backups`, `data-runtime`, `data-celery`, `data-prometheus`, `data-grafana`, `data-monitoring`, `data-acme`, `data-certs`, `data-cloudpanel-agent` e `secrets`.
 
-Assim `control.`, `api.` e os domínios provisórios das empresas passam pelo mesmo VHost e pelo mesmo gateway sem criar sites adicionais no CloudPanel.
-
-## Pacote recomendado
-
-Use o asset da Release:
-
-```text
-ARGWS-Financial-Platform-v<VERSAO>-Dockge.zip
-```
-
-Estrutura:
-
-```text
-argws-financial-platform/
-├── compose.yaml
-├── .env
-├── data-postgres/
-├── data-redis/
-├── data-rabbitmq/
-├── data-minio/
-├── data-backups/
-├── data-runtime/
-├── data-celery/
-├── data-acme/
-├── data-certs/
-├── data-cloudpanel-agent/
-└── secrets/
-    ├── rclone.conf
-    └── backup-age-identity.txt
-```
-
-Com `FINANCIAL_DATA_ROOT=.`, toda a persistência permanece visível na própria pasta da stack.
-
-## `.env`
-
-O exemplo foi reduzido para evitar repetição. A senha de infraestrutura é definida uma única vez:
-
-```env
-INTERNAL_SERVICES_PASSWORD=troque-por-uma-senha-url-safe-forte
-```
-
-Ela é injetada internamente em PostgreSQL, RabbitMQ, MinIO e S3. A senha inicial do administrador permanece separada:
-
-```env
-INITIAL_ADMIN_PASSWORD=troque-por-outra-senha-forte
-```
-
-Chaves criptográficas, tokens Cloudflare e secrets de webhooks continuam independentes e nunca devem reutilizar essas senhas.
-
-## Wildcard automático
-
-O modo padrão é:
-
-```env
-CLOUDFLARE_ENABLED=true
-CLOUDFLARE_PROVISIONING_MODE=wildcard
-CLOUDFLARE_PROXIED=false
-CLOUDFLARE_TENANT_RECORD_TARGET=proxy.${PLATFORM_DOMAIN}
-```
-
-O `financial-domain-init` lê pela API Cloudflare o registro DNS atual do domínio principal e deriva sua origem. A partir dela, cria/reconcilia automaticamente o hostname `proxy.${PLATFORM_DOMAIN}` em DNS-only e depois aponta o wildcard para esse proxy também em DNS-only. Não é necessário informar o IP público novamente no `.env`.
-
-Isso evita depender do SSL Universal da Cloudflare para um wildcard de segundo nível. O TLS dos subdomínios é terminado no CloudPanel pelo certificado wildcard emitido localmente por DNS-01.
-
-## Primeira instalação
-
-1. Extraia o asset `-Dockge.zip` na pasta de stacks.
-2. Renomeie `.env.example` para `.env`.
-3. Preencha domínio, e-mail, credenciais e Cloudflare.
-4. Crie o único Reverse Proxy no CloudPanel apontando para `127.0.0.1:GATEWAY_PORT`.
-5. Execute `docker compose config`.
-6. Execute `docker compose pull`.
-7. Execute `docker compose up -d`.
-
-Antes das migrations, `financial-preflight` valida a configuração sem imprimir segredos. Em seguida `financial-domain-init` garante a origem DNS-only e o wildcard, e só então a persistência e a aplicação são iniciadas.
-
-## Verificação
+## Instalação
 
 ```bash
-docker compose ps
-docker compose logs --tail=200 financial-preflight
-docker compose logs --tail=200 financial-domain-init
-docker compose logs --tail=200 financial-acme
-docker compose logs --tail=200 financial-cloudpanel-agent
-docker compose logs --tail=200 financial-rabbitmq
-docker compose logs --tail=200 financial-worker-default
+cp .env.example .env
+python3 scripts/generate_secrets.py --env .env
+docker compose config
+docker compose pull
+docker compose up -d --remove-orphans
 ```
 
-O resultado esperado de `docker compose ps` é apenas o gateway com um mapeamento de host. Os demais serviços podem mostrar suas portas internas (`5432/tcp`, `6379/tcp`, etc.), mas sem endereço/porta publicados no host.
-
-## Build local
-
-Nenhum deployment executa build local. O único modelo de compilação local permanece deliberadamente isolado no checkout de desenvolvimento:
+Para build local use somente o modelo de desenvolvimento:
 
 ```bash
 docker compose -f compose.yaml -f compose.local-build.yaml up -d --build
 ```
 
-Esse arquivo não faz parte do fluxo operacional do Dockge.
+Esse comando não deve ser usado no servidor Dockge/CloudPanel.
