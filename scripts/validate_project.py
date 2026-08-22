@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import ast
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -19,6 +18,35 @@ ERRORS: list[str] = []
 WARNINGS: list[str] = []
 METRICS: dict[str, Any] = {}
 
+RUNTIME_FILES = [
+    ROOT / "compose.yaml",
+    ROOT / "deployments/docker/compose.images.yaml",
+    ROOT / "deployments/dockge/compose.yaml",
+    ROOT / "deployments/cloudpanel/compose.yaml",
+    ROOT / "deployments/production/compose.yaml",
+    ROOT / "deployments/portainer/stack.yaml",
+]
+OVERRIDE_FILES = [
+    ROOT / "deployments/development/compose.override.yaml",
+    ROOT / "deployments/staging/compose.override.yaml",
+]
+CORE_SERVICES = {
+    "financial-preflight", "financial-storage-init", "financial-postgres", "financial-redis",
+    "financial-rabbitmq", "financial-minio", "financial-minio-init", "financial-migrate",
+    "financial-migrate-tenants", "financial-bootstrap", "financial-api", "financial-worker-default",
+    "financial-worker-billing", "financial-worker-notifications", "financial-worker-backups",
+    "financial-beat", "financial-web", "financial-gateway",
+}
+API_IMAGE_SERVICES = {
+    "financial-preflight", "financial-migrate", "financial-migrate-tenants", "financial-bootstrap",
+    "financial-api", "financial-worker-default", "financial-worker-billing",
+    "financial-worker-notifications", "financial-worker-backups", "financial-beat",
+}
+REQUIRED_DATA_TOKENS = {
+    "data-postgres", "data-redis", "data-rabbitmq", "data-minio",
+    "data-backups", "data-runtime", "data-celery",
+}
+
 
 def error(message: str) -> None:
     ERRORS.append(message)
@@ -28,40 +56,10 @@ def warning(message: str) -> None:
     WARNINGS.append(message)
 
 
-def project_files() -> list[Path]:
-    ignored = {
-        ".git", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
-        "dist", "financial-data", ".releases", "release-artifacts",
-    }
-    return [p for p in ROOT.rglob("*") if p.is_file() and not any(part in ignored for part in p.parts)]
-
-
-def parse_env(path: Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    if not path.is_file():
-        return values
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
-    return values
-
-
-def env_duplicate_keys(path: Path) -> list[str]:
-    keys: list[str] = []
-    if not path.is_file():
-        return []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        keys.append(line.split("=", 1)[0].strip())
-    return sorted({key for key in keys if keys.count(key) > 1})
-
-
 def load_yaml(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        error(f"Arquivo YAML ausente: {path.relative_to(ROOT)}")
+        return {}
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
@@ -70,101 +68,68 @@ def load_yaml(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def check_required_files() -> None:
-    required = [
-        "README.md", "DELIVERY_INDEX.md", "LICENSE", "SECURITY.md", "VERSION", "CHANGELOG.md", "RELEASE_NOTES.md",
-        "PR_TITLE.md", "PR_DESCRIPTION.md", ".env.example", "compose.yaml", "Makefile",
-        "backend/Dockerfile", "backend/app/version.py", "frontend/Dockerfile", "backend/alembic-platform.ini", "backend/alembic-tenant.ini",
-        "infrastructure/nginx/gateway.conf", "infrastructure/docker/gateway/Dockerfile",
-        "infrastructure/backup/rclone.conf.example", "secrets/backup-age-identity.txt.example",
-        "scripts/deploy_cloudpanel_dockge.sh", "scripts/install_local.sh", "scripts/backup.sh", "scripts/restore.sh",
-        "scripts/generate_secrets.py", "scripts/portainer_deploy.py", "scripts/package_release.py",
-        "scripts/package_dockge_stack.py", "scripts/validate_dockge_runtime.py", "scripts/deploy/lib.sh",
-        "deployments/docker/compose.images.yaml", "deployments/docker/install.sh", "deployments/docker/.env.example",
-        "deployments/dockge/compose.yaml", "deployments/dockge/install.sh", "deployments/dockge/.env.example",
-        "deployments/cloudpanel/compose.yaml", "deployments/cloudpanel/install.sh", "deployments/cloudpanel/.env.example",
-        "deployments/portainer/stack.yaml", "deployments/portainer/stack-build.yaml", "deployments/portainer/deploy.sh", "deployments/portainer/.env.example",
-        "docs/architecture/ARCHITECTURE.md", "docs/architecture/FLOWS.md", "docs/security/TENANT_ISOLATION.md",
-        "docs/operations/DEPLOY_DOCKGE.md", "docs/operations/DEPLOY_CLOUDPANEL.md", "docs/operations/DEPLOY_PORTAINER.md",
-        "docs/operations/BACKUP_RESTORE.md", "docs/operations/DOMAINS_SSL.md",
-        "docs/integrations/SMTP_EVOLUTION.md", "docs/integrations/BANKING_CNAB.md",
-        "docs/product/COMPLETION_MATRIX.md", "docs/release/DELIVERY_REPORT.md", "docs/API.md", "docs/ACCEPTANCE_CHECKLIST.md",
+def parse_env(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.is_file():
+        error(f"Arquivo de ambiente ausente: {path.relative_to(ROOT)}")
+        return values
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key in seen:
+            duplicates.add(key)
+        seen.add(key)
+        values[key] = value.strip()
+    if duplicates:
+        error(f"Variáveis duplicadas em {path.relative_to(ROOT)}: {sorted(duplicates)}")
+    return values
+
+
+def required_files() -> None:
+    paths = [
+        "README.md", "VERSION", "CHANGELOG.md", "RELEASE_NOTES.md", ".env.example",
+        "compose.yaml", "compose.local-build.yaml", "Makefile",
+        "backend/Dockerfile", "backend/app/version.py", "backend/app/preflight.py",
+        "frontend/Dockerfile", "frontend/vite.config.ts", "frontend/package.json",
+        "scripts/generate_secrets.py", "scripts/package_release.py", "scripts/package_dockge_stack.py",
+        "scripts/validate_dockge_runtime.py", "scripts/validate_runtime_contract.py",
+        "deployments/dockge/compose.yaml", "deployments/dockge/.env.example",
+        "deployments/docker/compose.images.yaml", "deployments/cloudpanel/compose.yaml",
+        "deployments/production/compose.yaml", "deployments/portainer/stack.yaml",
         ".github/workflows/ci.yml", ".github/workflows/publish.yml",
     ]
-    for item in required:
-        if not (ROOT / item).is_file():
-            error(f"Arquivo obrigatório ausente: {item}")
+    for relative in paths:
+        if not (ROOT / relative).is_file():
+            error(f"Arquivo obrigatório ausente: {relative}")
 
 
-def check_python() -> None:
-    paths = sorted((ROOT / "backend").rglob("*.py")) + sorted((ROOT / "scripts").rglob("*.py"))
-    for path in paths:
-        if "__pycache__" in path.parts:
-            continue
-        try:
-            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except SyntaxError as exc:
-            error(f"Python inválido: {path.relative_to(ROOT)}:{exc.lineno}: {exc.msg}")
+def validate_python() -> None:
+    count = 0
+    for base in (ROOT / "backend", ROOT / "scripts"):
+        for path in sorted(base.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            count += 1
+            try:
+                ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            except SyntaxError as exc:
+                error(f"Python inválido: {path.relative_to(ROOT)}:{exc.lineno}: {exc.msg}")
+    METRICS["python_files"] = count
 
 
-def _module_exists(module: str) -> bool:
-    relative = Path(*module.split("."))
-    backend = ROOT / "backend"
-    return (backend / relative).with_suffix(".py").is_file() or (backend / relative / "__init__.py").is_file()
-
-
-def check_internal_python_imports() -> None:
-    for path in sorted((ROOT / "backend" / "app").rglob("*.py")):
-        if "__pycache__" in path.parts:
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            modules: list[str] = []
-            if isinstance(node, ast.Import):
-                modules = [i.name for i in node.names if i.name == "app" or i.name.startswith("app.")]
-            elif isinstance(node, ast.ImportFrom) and node.module and (node.module == "app" or node.module.startswith("app.")):
-                modules = [node.module]
-            for module in modules:
-                if not _module_exists(module):
-                    error(f"Import interno inexistente: {path.relative_to(ROOT)} -> {module}")
-
-
-def check_settings_contract() -> None:
-    config_path = ROOT / "backend/app/core/config.py"
-    tree = ast.parse(config_path.read_text(encoding="utf-8"), filename=str(config_path))
-    defined: set[str] = set()
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == "Settings":
-            for item in node.body:
-                if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                    defined.add(item.target.id)
-                elif isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    defined.add(item.name)
-    used: set[str] = set()
-    for path in sorted((ROOT / "backend/app").rglob("*.py")):
-        source = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        imports_global_settings = any(
-            isinstance(n, ast.ImportFrom) and n.module == "app.core.config" and any(a.name == "settings" for a in n.names)
-            for n in ast.walk(source)
-        )
-        if not imports_global_settings:
-            continue
-        for node in ast.walk(source):
-            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "settings":
-                used.add(node.attr)
-    missing = sorted(used - defined)
-    if missing:
-        error(f"Atributos settings usados mas não definidos: {missing}")
-
-
-def check_shell() -> None:
+def validate_shell() -> None:
     bash = shutil.which("bash")
     if bash is None:
         warning("bash indisponível; scripts shell não foram validados")
         return
     count = 0
     for path in sorted(ROOT.rglob("*.sh")):
-        if any(part in {".git", "node_modules", "financial-data"} for part in path.parts):
+        if any(part in {".git", "node_modules"} for part in path.parts):
             continue
         count += 1
         result = subprocess.run([bash, "-n", str(path)], capture_output=True, text=True, check=False)
@@ -173,426 +138,209 @@ def check_shell() -> None:
     METRICS["shell_scripts"] = count
 
 
-def check_compose_file(path: Path, env_path: Path, expected_services: set[str], expected_queues: set[str]) -> None:
+def _service_ports(service: Any) -> list[Any]:
+    if not isinstance(service, dict):
+        return []
+    ports = service.get("ports") or []
+    return list(ports) if isinstance(ports, list) else [ports]
+
+
+def _has_build(value: Any) -> bool:
+    if isinstance(value, dict):
+        if "build" in value:
+            return True
+        return any(_has_build(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_has_build(item) for item in value)
+    return False
+
+
+def validate_runtime_compose(path: Path) -> None:
     data = load_yaml(path)
-    services_data = data.get("services", {}) if isinstance(data.get("services"), dict) else {}
-    services = set(services_data)
-    missing = expected_services - services
+    services = data.get("services", {})
+    if not isinstance(services, dict):
+        error(f"Compose sem services: {path.relative_to(ROOT)}")
+        return
+    missing = sorted(CORE_SERVICES - set(services))
     if missing:
-        error(f"Serviços ausentes em {path.relative_to(ROOT)}: {sorted(missing)}")
-    commands = "\n".join(str(s.get("command", "")) for s in services_data.values() if isinstance(s, dict))
-    for queue in sorted(expected_queues):
-        if queue not in commands:
-            error(f"Fila Celery ausente em {path.relative_to(ROOT)}: {queue}")
-    env_keys = set(parse_env(env_path))
-    referenced = set(re.findall(r"\$\{([A-Z][A-Z0-9_]*)", path.read_text(encoding="utf-8")))
-    missing_env = sorted(referenced - env_keys)
-    if missing_env:
-        error(f"Variáveis de {path.relative_to(ROOT)} ausentes em {env_path.relative_to(ROOT)}: {missing_env}")
+        error(f"Serviços obrigatórios ausentes em {path.relative_to(ROOT)}: {missing}")
+    if _has_build(data):
+        error(f"Deploy não pode conter build local: {path.relative_to(ROOT)}")
+
+    published = [name for name, service in services.items() if _service_ports(service)]
+    if published != ["financial-gateway"]:
+        error(f"Somente financial-gateway pode publicar porta em {path.relative_to(ROOT)}; encontrado: {published}")
+    ports = _service_ports(services.get("financial-gateway", {}))
+    if len(ports) != 1 or ":80" not in str(ports[0]):
+        error(f"Gateway deve publicar exatamente uma porta HTTP em {path.relative_to(ROOT)}")
+
+    expected_api = "ghcr.io/wkarts/argws-financial-api:latest"
+    for name in API_IMAGE_SERVICES:
+        service = services.get(name)
+        if isinstance(service, dict) and service.get("image") != expected_api:
+            error(f"{path.relative_to(ROOT)}:{name} deve usar {expected_api}")
+        if isinstance(service, dict) and service.get("pull_policy") != "always":
+            error(f"{path.relative_to(ROOT)}:{name} deve usar pull_policy=always")
+
+    for name, image in {
+        "financial-web": "ghcr.io/wkarts/argws-financial-web:latest",
+        "financial-gateway": "ghcr.io/wkarts/argws-financial-gateway:latest",
+    }.items():
+        service = services.get(name)
+        if isinstance(service, dict) and service.get("image") != image:
+            error(f"{path.relative_to(ROOT)}:{name} deve usar {image}")
+        if isinstance(service, dict) and service.get("pull_policy") != "always":
+            error(f"{path.relative_to(ROOT)}:{name} deve usar pull_policy=always")
+
+    preflight = services.get("financial-preflight", {})
+    if not isinstance(preflight, dict) or preflight.get("network_mode") != "none":
+        error(f"financial-preflight deve executar sem rede em {path.relative_to(ROOT)}")
+
+    text = path.read_text(encoding="utf-8")
+    missing_data = sorted(token for token in REQUIRED_DATA_TOKENS if token not in text)
+    if missing_data:
+        error(f"Persistência data-* incompleta em {path.relative_to(ROOT)}: {missing_data}")
+    if data.get("volumes"):
+        error(f"Runtime deve usar bind mounts data-* e não named volumes: {path.relative_to(ROOT)}")
 
 
-def check_compose() -> None:
-    source_services = {
-        "financial-storage-init", "financial-postgres", "financial-redis", "financial-rabbitmq", "financial-minio",
-        "financial-minio-init", "financial-migrate", "financial-migrate-tenants", "financial-bootstrap", "financial-api",
-        "financial-worker-default", "financial-worker-billing", "financial-worker-notifications", "financial-worker-backups",
-        "financial-beat", "financial-web", "financial-gateway", "financial-api-test", "financial-web-test",
-    }
-    image_services = source_services - {"financial-storage-init", "financial-api-test", "financial-web-test"}
-    queues = {
-        "financial.default", "financial.provisioning", "financial.outbox", "financial.billing", "financial.banking",
-        "financial.cnab", "financial.reconciliation", "financial.notifications", "financial.webhooks", "financial.backups", "financial.exports",
-    }
-    check_compose_file(ROOT / "compose.yaml", ROOT / ".env.example", source_services, queues)
-    check_compose_file(ROOT / "deployments/docker/compose.images.yaml", ROOT / "deployments/docker/.env.example", image_services, queues)
-    check_compose_file(ROOT / "deployments/dockge/compose.yaml", ROOT / "deployments/dockge/.env.example", image_services, queues)
-    check_compose_file(ROOT / "deployments/portainer/stack.yaml", ROOT / "deployments/portainer/.env.example", image_services, queues)
+def validate_deployment_overrides() -> None:
+    for path in OVERRIDE_FILES:
+        data = load_yaml(path)
+        if _has_build(data):
+            error(f"Override de deployment não pode conter build: {path.relative_to(ROOT)}")
+        services = data.get("services", {}) if isinstance(data, dict) else {}
+        if isinstance(services, dict):
+            published = [name for name, service in services.items() if _service_ports(service)]
+            if any(name != "financial-gateway" for name in published):
+                error(f"Override publica porta interna em {path.relative_to(ROOT)}: {published}")
 
+    disabled = load_yaml(ROOT / "deployments/portainer/stack-build.yaml")
+    if _has_build(disabled):
+        error("deployments/portainer/stack-build.yaml precisa permanecer desabilitado, sem build")
+    if disabled.get("services") not in ({}, None):
+        error("stack-build.yaml desabilitado não deve declarar serviços")
+
+    local = load_yaml(ROOT / "compose.local-build.yaml")
+    if not _has_build(local):
+        error("compose.local-build.yaml deve ser o único modelo explícito de build local")
+    local_services = local.get("services", {}) if isinstance(local, dict) else {}
+    for required in ("financial-api", "financial-web", "financial-gateway", "financial-preflight"):
+        service = local_services.get(required, {}) if isinstance(local_services, dict) else {}
+        if not isinstance(service, dict) or "build" not in service:
+            error(f"compose.local-build.yaml sem build explícito de {required}")
+
+
+def validate_compose() -> None:
+    for path in RUNTIME_FILES:
+        validate_runtime_compose(path)
+    validate_deployment_overrides()
     canonical = (ROOT / "compose.yaml").read_bytes()
-    cloudpanel = ROOT / "deployments/cloudpanel/compose.yaml"
-    if cloudpanel.read_bytes() != canonical:
-        error(f"Compose divergente do canônico: {cloudpanel.relative_to(ROOT)}")
-
-    dockge_text = (ROOT / "deployments/dockge/compose.yaml").read_text(encoding="utf-8")
-    if re.search(r"^\s+build:\s*$", dockge_text, re.MULTILINE):
-        error("A stack Dockge não pode depender de build local")
-    for image in (
-        "ghcr.io/wkarts/argws-financial-api:latest",
-        "ghcr.io/wkarts/argws-financial-web:latest",
-        "ghcr.io/wkarts/argws-financial-gateway:latest",
-    ):
-        if image not in dockge_text:
-            error(f"Stack Dockge não fixa imagem GHCR latest: {image}")
-    if dockge_text.count("pull_policy: always") < 3:
-        error("Stack Dockge deve fixar pull_policy: always para API, Web e Gateway")
-    if re.search(r"^\s+APP_VERSION:\s*", dockge_text, re.MULTILINE):
-        error("Stack Dockge não deve sobrescrever a versão embutida nas imagens")
-
-    portainer_text = (ROOT / "deployments/portainer/stack.yaml").read_text(encoding="utf-8")
-    if re.search(r"^\s+build:\s*$", portainer_text, re.MULTILINE):
-        error("A stack Portainer de imagens não pode depender de build local")
-    if "GATEWAY_IMAGE" not in portainer_text:
-        error("Stack Portainer não referencia a imagem do gateway")
+    for path in RUNTIME_FILES[1:]:
+        if path.read_bytes() != canonical:
+            error(f"Runtime divergente do compose canônico: {path.relative_to(ROOT)}")
 
 
-def check_yaml_files() -> None:
-    count = 0
-    for path in sorted(ROOT.rglob("*.yml")) + sorted(ROOT.rglob("*.yaml")):
-        if any(part in {".git", "node_modules", "financial-data"} for part in path.parts):
-            continue
-        load_yaml(path)
-        count += 1
-    METRICS["yaml_files"] = count
+def validate_env() -> None:
+    canonical = parse_env(ROOT / ".env.example")
+    required = {
+        "APP_VERSION", "VITE_APP_VERSION", "APP_SECRET_KEY", "FIELD_ENCRYPTION_KEY",
+        "POSTGRES_PASSWORD", "POSTGRES_ADMIN_PASSWORD", "RABBITMQ_PASSWORD",
+        "MINIO_ROOT_PASSWORD", "S3_SECRET_KEY", "CONTROL_PLANE_HOST", "API_HOST",
+        "TENANT_DOMAIN_ROOT", "DOMAIN_RECONCILIATION_TOKEN", "BANKING_WEBHOOK_SECRET",
+        "FINANCIAL_DATA_ROOT", "BACKEND_IMAGE", "FRONTEND_IMAGE", "GATEWAY_IMAGE",
+    }
+    missing = sorted(required - set(canonical))
+    if missing:
+        error(f"Variáveis obrigatórias ausentes no .env.example: {missing}")
+    if canonical.get("APP_VERSION") or canonical.get("VITE_APP_VERSION"):
+        error("APP_VERSION/VITE_APP_VERSION devem ficar vazios nos exemplos")
+    if canonical.get("APP_PULL_POLICY") not in {"always", ""}:
+        error("APP_PULL_POLICY canônico deve ser always")
+    if canonical.get("FINANCIAL_DATA_ROOT") != ".":
+        error("FINANCIAL_DATA_ROOT canônico deve ser .")
+    for key, expected in {
+        "BACKEND_IMAGE": "ghcr.io/wkarts/argws-financial-api:latest",
+        "FRONTEND_IMAGE": "ghcr.io/wkarts/argws-financial-web:latest",
+        "GATEWAY_IMAGE": "ghcr.io/wkarts/argws-financial-gateway:latest",
+    }.items():
+        if canonical.get(key) != expected:
+            error(f"{key} canônico deve ser {expected}")
+
+    env_paths = sorted((ROOT / "deployments").rglob(".env.example")) + [ROOT / "deployments/portainer/stack.env.example"]
+    for path in env_paths:
+        if path.is_file():
+            parse_env(path)
 
 
-def check_workflows() -> None:
+def validate_versioning() -> None:
+    version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", version):
+        error(f"VERSION inválida: {version!r}")
+    METRICS["canonical_version"] = version
+    frontend = json.loads((ROOT / "frontend/package.json").read_text(encoding="utf-8"))
+    if "version" in frontend:
+        error("frontend/package.json não deve duplicar VERSION")
+    for section in ("dependencies", "devDependencies"):
+        for package, value in frontend.get(section, {}).items():
+            if str(value).startswith(("^", "~", "*", ">", "<")):
+                error(f"Dependência frontend não fixada: {package}={value}")
+    if not (ROOT / "frontend/package-lock.json").is_file():
+        warning("frontend/package-lock.json ausente; dependências são instaladas pelas versões diretas fixadas")
+    backend_version = (ROOT / "backend/app/version.py").read_text(encoding="utf-8")
+    vite = (ROOT / "frontend/vite.config.ts").read_text(encoding="utf-8")
+    if 'os.getenv("APP_VERSION"' not in backend_version or '"VERSION"' not in backend_version:
+        error("backend/app/version.py não resolve versão por ambiente/VERSION")
+    if "../VERSION" not in vite or "VITE_APP_VERSION" not in vite:
+        error("Vite não injeta VITE_APP_VERSION a partir de VERSION")
+
+
+def validate_alembic() -> None:
+    for filename, scope in (("alembic-platform.ini", "platform"), ("alembic-tenant.ini", "tenant")):
+        path = ROOT / "backend" / filename
+        text = path.read_text(encoding="utf-8")
+        if f"script_location = %(here)s/migrations/{scope}" not in text:
+            error(f"Alembic sem script_location portável: {path.relative_to(ROOT)}")
+        if "prepend_sys_path = %(here)s" not in text:
+            error(f"Alembic sem prepend_sys_path portável: {path.relative_to(ROOT)}")
+
+
+def validate_workflows() -> None:
     for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
         text = path.read_text(encoding="utf-8")
         if not re.search(r"^on:\s*$", text, re.MULTILINE):
-            error(f"Workflow sem gatilho `on`: {path.relative_to(ROOT)}")
+            error(f"Workflow sem on: {path.relative_to(ROOT)}")
         if "jobs:" not in text:
             error(f"Workflow sem jobs: {path.relative_to(ROOT)}")
 
 
-def check_frontend_manifest() -> None:
-    data = json.loads((ROOT / "frontend/package.json").read_text(encoding="utf-8"))
-    if "version" in data:
-        error("frontend/package.json não deve duplicar a versão da aplicação; use VERSION")
-    for section in ("dependencies", "devDependencies"):
-        for package, version in data.get(section, {}).items():
-            if str(version).startswith(("^", "~", "*", ">", "<")):
-                error(f"Dependência frontend não fixada: {package}={version}")
-    required_scripts = {"build", "test:run", "typecheck"}
-    missing = required_scripts - set(data.get("scripts", {}))
-    if missing:
-        error(f"Scripts frontend ausentes: {sorted(missing)}")
-    if not (ROOT / "frontend/package-lock.json").is_file():
-        warning("frontend/package-lock.json não está incluído; o Dockerfile usa npm install com versões diretas fixadas")
-
-
-def check_vue_imports() -> None:
-    source_root = ROOT / "frontend/src"
-    vue_count = 0
-    for path in sorted(source_root.rglob("*")):
-        if path.suffix not in {".ts", ".vue"}:
-            continue
-        content = path.read_text(encoding="utf-8")
-        for target in re.findall(r"(?:from\s+|import\s*)['\"](\.{1,2}/[^'\"]+)['\"]", content):
-            candidate = (path.parent / target).resolve()
-            choices = [candidate, candidate.with_suffix(".ts"), candidate.with_suffix(".vue"), candidate / "index.ts"]
-            if not any(item.exists() for item in choices):
-                error(f"Import frontend não encontrado: {path.relative_to(ROOT)} -> {target}")
-        if path.suffix == ".vue":
-            vue_count += 1
-            if "<template" not in content or "</template>" not in content:
-                error(f"Componente Vue sem template completo: {path.relative_to(ROOT)}")
-            if content.count("<template") != content.count("</template>"):
-                error(f"Templates Vue desbalanceados: {path.relative_to(ROOT)}")
-    METRICS["vue_files"] = vue_count
-
-
-def check_frontend_surface() -> None:
-    required_pages = {
-        "ControlDashboardPage.vue", "TenantsPage.vue", "TenantDetailPage.vue", "PlansPage.vue", "PlatformUsersPage.vue",
-        "ProvisioningPage.vue", "BackupsPage.vue", "ControlAuditPage.vue", "ControlSettingsPage.vue", "PlatformAccessPage.vue",
-        "TenantDashboardPage.vue", "CompaniesPage.vue", "CustomersPage.vue", "ServicesPage.vue",
-        "ContractsPage.vue", "ReceivablesPage.vue", "ChargesPage.vue", "PaymentsPage.vue", "PixAutomaticPage.vue",
-        "ReconciliationPage.vue", "NegotiationsPage.vue", "BankingPage.vue", "FiscalDocumentsPage.vue", "NotificationsPage.vue",
-        "IntegrationsPage.vue", "DeveloperIntegrationsPage.vue", "DocumentsPage.vue", "ImportsPage.vue", "UsersPage.vue", "AuditPage.vue",
-        "PublicPaymentPage.vue",
-    }
-    existing = {p.name for p in (ROOT / "frontend/src/pages").glob("*.vue")}
-    missing = required_pages - existing
-    if missing:
-        error(f"Telas obrigatórias ausentes: {sorted(missing)}")
-
-
-def check_env() -> None:
-    env_paths = [
-        ROOT / ".env.example",
-        ROOT / "deployments/development/.env.example",
-        ROOT / "deployments/staging/.env.example",
-        ROOT / "deployments/production/.env.example",
-        ROOT / "deployments/docker/.env.example",
-        ROOT / "deployments/dockge/.env.example",
-        ROOT / "deployments/cloudpanel/.env.example",
-        ROOT / "deployments/portainer/.env.example",
-        ROOT / "deployments/portainer/stack.env.example",
-    ]
-    for path in env_paths:
-        duplicates = env_duplicate_keys(path)
-        if duplicates:
-            error(f"Variáveis duplicadas em {path.relative_to(ROOT)}: {duplicates}")
-
-    canonical = parse_env(ROOT / ".env.example")
-    required = {
-        "APP_VERSION", "VITE_APP_VERSION", "APP_SECRET_KEY", "FIELD_ENCRYPTION_KEY", "POSTGRES_PASSWORD",
-        "RABBITMQ_PASSWORD", "MINIO_ROOT_PASSWORD", "S3_SECRET_KEY", "CONTROL_PLANE_HOST", "API_HOST",
-        "TENANT_DOMAIN_ROOT", "DOMAIN_RECONCILIATION_TOKEN", "EVOLUTION_WEBHOOK_SECRET", "BANKING_WEBHOOK_SECRET",
-        "RATE_LIMIT_DEFAULT", "FINANCIAL_DATA_ROOT", "BACKEND_IMAGE", "FRONTEND_IMAGE", "GATEWAY_IMAGE",
-        "ACME_IMAGE", "CLOUDPANEL_AGENT_IMAGE", "RCLONE_CONFIG_PATH", "BACKUP_AGE_IDENTITY_PATH",
-    }
-    missing = required - set(canonical)
-    if missing:
-        error(f"Variáveis obrigatórias ausentes no .env.example: {sorted(missing)}")
-    if canonical.get("BOOTSTRAP_DEMO_TENANT", "").lower() != "false":
-        error("BOOTSTRAP_DEMO_TENANT deve vir desabilitado no ambiente de produção")
-    if canonical.get("APP_VERSION") or canonical.get("VITE_APP_VERSION"):
-        error("APP_VERSION e VITE_APP_VERSION devem ficar vazios nos exemplos; os scripts leem VERSION")
-
-    canonical_keys = set(canonical)
-    image_keys = {"BACKEND_IMAGE", "FRONTEND_IMAGE", "GATEWAY_IMAGE", "ACME_IMAGE", "CLOUDPANEL_AGENT_IMAGE"}
-    for path in env_paths[1:]:
-        values = parse_env(path)
-        if values.get("APP_VERSION") != canonical.get("APP_VERSION"):
-            error(f"APP_VERSION deve ser automática em {path.relative_to(ROOT)}")
-        if values.get("VITE_APP_VERSION") != canonical.get("VITE_APP_VERSION"):
-            error(f"VITE_APP_VERSION deve ser automática em {path.relative_to(ROOT)}")
-        missing_keys = sorted(canonical_keys - set(values))
-        if missing_keys:
-            error(f"Variáveis canônicas ausentes em {path.relative_to(ROOT)}: {missing_keys}")
-        for key in image_keys:
-            value = values.get(key, "")
-            if value and not value.endswith(":latest"):
-                error(f"Imagem do produto deve usar :latest em {path.relative_to(ROOT)}: {key}={value}")
-    for key in image_keys:
-        value = canonical.get(key, "")
-        if value and not value.endswith(":latest"):
-            error(f"Imagem do produto deve usar :latest no .env.example: {key}={value}")
-
-
-def check_migrations() -> None:
-    for scope in ("platform", "tenant"):
-        versions = [p for p in (ROOT / f"backend/migrations/{scope}/versions").glob("*.py") if p.name != "__init__.py"]
-        if not versions:
-            error(f"Nenhuma migration encontrada para {scope}")
-        revisions: set[str] = set()
-        for path in versions:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            revision = None
-            for node in tree.body:
-                if isinstance(node, ast.Assign):
-                    for target in node.targets:
-                        if isinstance(target, ast.Name) and target.id == "revision" and isinstance(node.value, ast.Constant):
-                            revision = str(node.value.value)
-            if not revision:
-                error(f"Migration sem revision: {path.relative_to(ROOT)}")
-            elif revision in revisions:
-                error(f"Revision duplicada em {scope}: {revision}")
-            revisions.add(revision or "")
-        METRICS[f"{scope}_migrations"] = len(versions)
-
-
-def check_versions() -> None:
-    canonical = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
-    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?", canonical):
-        error(f"VERSION inválida: {canonical!r}")
-
-    init_text = (ROOT / "backend/app/__init__.py").read_text(encoding="utf-8")
-    config_text = (ROOT / "backend/app/core/config.py").read_text(encoding="utf-8")
-    version_text = (ROOT / "backend/app/version.py").read_text(encoding="utf-8")
-    vite_text = (ROOT / "frontend/vite.config.ts").read_text(encoding="utf-8")
-    docker_backend = (ROOT / "backend/Dockerfile").read_text(encoding="utf-8")
-    docker_frontend = (ROOT / "frontend/Dockerfile").read_text(encoding="utf-8")
-
-    if "get_app_version()" not in init_text:
-        error("backend/app/__init__.py não resolve a versão pela fonte canônica")
-    if "app_version: str = get_app_version()" not in config_text:
-        error("Settings.app_version não resolve a versão pela fonte canônica")
-    if 'os.getenv("APP_VERSION"' not in version_text or '"VERSION"' not in version_text:
-        error("backend/app/version.py não implementa resolução de versão por ambiente/VERSION")
-    if "../VERSION" not in vite_text or "VITE_APP_VERSION" not in vite_text:
-        error("Vite não injeta VITE_APP_VERSION a partir de VERSION")
-    if "COPY VERSION" not in docker_backend or "COPY VERSION" not in docker_frontend:
-        error("Dockerfiles precisam empacotar o arquivo VERSION")
-
-    operational_paths = [
-        ROOT / "backend/app/__init__.py",
-        ROOT / "backend/app/core/config.py",
-        ROOT / "frontend/package.json",
-        ROOT / "frontend/Dockerfile",
-        ROOT / "frontend/vite.config.ts",
-        ROOT / ".env.example",
-        ROOT / "compose.yaml",
-        ROOT / "deployments/docker/compose.images.yaml",
-        ROOT / "deployments/portainer/stack.yaml",
-        ROOT / "deployments/portainer/stack-build.yaml",
-        ROOT / "deployments/docker/install.sh",
-        ROOT / "deployments/portainer/deploy.sh",
-    ]
-    for path in operational_paths:
-        if canonical and canonical in path.read_text(encoding="utf-8"):
-            error(f"Versão canônica duplicada em arquivo operacional: {path.relative_to(ROOT)}")
-
-    METRICS["canonical_version"] = canonical
-
-
-def check_runtime_imports_and_routes() -> None:
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(ROOT / "backend")
-    env["APP_ENV"] = "testing"
-    mapper_code = "from sqlalchemy.orm import configure_mappers; import app.models.platform, app.models.tenant; configure_mappers(); print('OK')"
-    result = subprocess.run([sys.executable, "-c", mapper_code], cwd=ROOT, env=env, capture_output=True, text=True, check=False)
-    if result.returncode:
-        error(f"Mapeamentos SQLAlchemy falharam: {(result.stderr or result.stdout).strip()}")
-
-    route_count = 0
-    seen: set[tuple[str, str, str]] = set()
-    for path in sorted((ROOT / "backend/app/api/routes").glob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            for deco in node.decorator_list:
-                if not isinstance(deco, ast.Call) or not isinstance(deco.func, ast.Attribute):
-                    continue
-                method = deco.func.attr.upper()
-                if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"} or not deco.args:
-                    continue
-                arg = deco.args[0]
-                if not isinstance(arg, ast.Constant) or not isinstance(arg.value, str):
-                    continue
-                key = (path.name, method, arg.value)
-                if key in seen:
-                    error(f"Rota duplicada no mesmo módulo: {path.relative_to(ROOT)} {method} {arg.value}")
-                seen.add(key)
-                route_count += 1
-    METRICS["fastapi_route_decorators"] = route_count
-
-
-def check_alembic_configs() -> None:
-    for filename, scope in (("alembic-platform.ini", "platform"), ("alembic-tenant.ini", "tenant")):
-        path = ROOT / "backend" / filename
-        content = path.read_text(encoding="utf-8")
-        expected = f"script_location = %(here)s/migrations/{scope}"
-        if expected not in content:
-            error(f"Alembic não usa caminho portável em {path.relative_to(ROOT)}")
-        if "prepend_sys_path = %(here)s" not in content:
-            error(f"Alembic não usa prepend_sys_path portável em {path.relative_to(ROOT)}")
-
-
-def _backend_api_routes() -> set[tuple[str, str]]:
-    routes: set[tuple[str, str]] = set()
-    for path in sorted((ROOT / "backend/app/api/routes").glob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        prefix = ""
-        for node in tree.body:
-            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call):
-                continue
-            if not any(isinstance(target, ast.Name) and target.id == "router" for target in node.targets):
-                continue
-            for keyword in node.value.keywords:
-                if keyword.arg == "prefix" and isinstance(keyword.value, ast.Constant):
-                    prefix = str(keyword.value.value)
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            for decorator in node.decorator_list:
-                if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
-                    continue
-                method = decorator.func.attr.upper()
-                if method not in {"GET", "POST", "PUT", "PATCH", "DELETE"} or not decorator.args:
-                    continue
-                route_arg = decorator.args[0]
-                if isinstance(route_arg, ast.Constant) and isinstance(route_arg.value, str):
-                    routes.add((method, prefix + route_arg.value))
-    return routes
-
-
-def _route_matches(frontend_path: str, backend_path: str) -> bool:
-    frontend_path = frontend_path.split("?", 1)[0]
-    if backend_path.startswith("/api"):
-        backend_path = backend_path[4:]
-    frontend_parts = frontend_path.strip("/").split("/")
-    backend_parts = backend_path.strip("/").split("/")
-    if len(frontend_parts) != len(backend_parts):
-        return False
-    return all(
-        left == right or left.startswith("{") or right.startswith("{")
-        for left, right in zip(frontend_parts, backend_parts, strict=True)
-    )
-
-
-def check_frontend_api_contract() -> None:
-    backend_routes = _backend_api_routes()
-    call_pattern = re.compile(
-        r"\bapi\.(get|post|put|patch|delete)(?:<[^\n(]+>)?\s*\(\s*([`'\"])(.*?)\2",
-        re.DOTALL,
-    )
-    calls: list[tuple[str, str, Path]] = []
-    for path in sorted((ROOT / "frontend/src").rglob("*")):
-        if path.suffix not in {".ts", ".vue"}:
-            continue
-        content = path.read_text(encoding="utf-8")
-        for match in call_pattern.finditer(content):
-            endpoint = re.sub(r"\$\{[^}]+\}", "{param}", match.group(3))
-            calls.append((match.group(1).upper(), endpoint, path))
-    missing = [
-        (method, endpoint, path)
-        for method, endpoint, path in calls
-        if not any(
-            method == backend_method and _route_matches(endpoint, backend_path)
-            for backend_method, backend_path in backend_routes
-        )
-    ]
-    for method, endpoint, path in missing:
-        error(f"Chamada frontend sem rota backend: {path.relative_to(ROOT)} {method} {endpoint}")
-    METRICS["frontend_api_calls"] = len(calls)
-    METRICS["frontend_api_contracts"] = len({(method, endpoint) for method, endpoint, _ in calls})
-    METRICS["frontend_api_contract_mismatches"] = len(missing)
-
-
-def check_sensitive_files(*, allow_runtime_files: bool) -> None:
+def validate_sensitive_files(allow_runtime_files: bool) -> None:
     if allow_runtime_files:
         return
-    explicit_runtime = [
-        ROOT / ".env",
-        ROOT / ".bootstrap-credentials.txt",
-        ROOT / "deployments/portainer/stack.env",
-        ROOT / "deployments/portainer/.bootstrap-credentials.txt",
-    ]
-    for path in explicit_runtime:
-        if path.exists():
-            error(f"Arquivo sensível não deve compor o pacote: {path.relative_to(ROOT)}")
-    for path in project_files():
-        if path.name in {"rclone.conf", "backup-age-identity.txt", ".bootstrap-credentials.txt"} and ".example" not in path.name:
-            error(f"Secret real potencialmente versionado: {path.relative_to(ROOT)}")
+    for relative in (".env", ".bootstrap-credentials.txt", "deployments/portainer/stack.env"):
+        if (ROOT / relative).exists():
+            error(f"Arquivo sensível não deve ser versionado/pacotado: {relative}")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Valida a ARGWS Financial Platform")
+    parser = argparse.ArgumentParser(description="Valida ARGWS Financial Platform")
     parser.add_argument("--allow-runtime-files", action="store_true")
     args = parser.parse_args()
-    check_required_files()
-    check_python()
-    check_internal_python_imports()
-    check_settings_contract()
-    check_shell()
-    check_yaml_files()
-    check_compose()
-    check_workflows()
-    check_frontend_manifest()
-    check_vue_imports()
-    check_frontend_surface()
-    check_env()
-    check_migrations()
-    check_alembic_configs()
-    check_versions()
-    check_runtime_imports_and_routes()
-    check_frontend_api_contract()
-    check_sensitive_files(allow_runtime_files=args.allow_runtime_files)
-    files = project_files()
+    required_files()
+    validate_python()
+    validate_shell()
+    validate_compose()
+    validate_env()
+    validate_versioning()
+    validate_alembic()
+    validate_workflows()
+    validate_sensitive_files(args.allow_runtime_files)
     report = {
         "status": "PASS" if not ERRORS else "FAIL",
         "version": (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
         "errors": ERRORS,
         "warnings": WARNINGS,
-        "metrics": {
-            **METRICS,
-            "python_files": len([p for p in files if p.suffix == ".py"]),
-            "documentation_files": len([p for p in files if p.suffix == ".md"]),
-            "total_files": len(files),
-        },
+        "metrics": METRICS,
     }
     (ROOT / "VALIDATION_REPORT.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))

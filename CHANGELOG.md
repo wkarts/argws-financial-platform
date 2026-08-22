@@ -1,5 +1,38 @@
 # Changelog
 
+## 1.0.0-rc.7 — 2026-08-21
+
+### Segurança e runtime
+
+- todos os deployments passam a ser exclusivamente **image-only**, consumindo GHCR `:latest`;
+- `compose.yaml` da raiz deixa de ser modelo de build e passa a ser o runtime canônico de deploy;
+- build local fica isolado exclusivamente em `compose.local-build.yaml`, para desenvolvimento e CI;
+- Dockge, Docker, CloudPanel, Production e Portainer usam o mesmo Compose canônico;
+- staging e development deixam de declarar `build:` e passam a consumir GHCR;
+- somente `financial-gateway` publica uma porta no host;
+- PostgreSQL, Redis, RabbitMQ e MinIO deixam de publicar portas de administração/console;
+- a porta do gateway permanece ligada a `127.0.0.1` por padrão;
+- dados persistentes continuam em `./data-*` e arquivos auxiliares em `./secrets`.
+
+### Preflight e diagnóstico
+
+- adicionado `financial-preflight`, executado sem rede antes de storage/migrations;
+- adicionado `backend/app/preflight.py` para detectar configuração inconsistente sem vazar segredos;
+- validação cobre placeholders de produção, PostgreSQL admin, RabbitMQ, MinIO/S3, SMTP e integrações habilitadas;
+- `scripts/generate_secrets.py` passa a reparar relações derivadas, sincronizar credenciais e normalizar `SMTP_SECURITY`;
+- falhas de configuração passam a ocorrer antes de `financial-migrate`, com mensagem explícita;
+- instalador Dockge passa a exibir logs de preflight/migration quando a subida falha.
+
+### Operação e auditoria
+
+- logging Docker do runtime passa a usar driver `local` com rotação;
+- documentado o modelo de auditoria futura via Control Plane sem Docker socket público e sem portas administrativas permanentes;
+- acesso excepcional a serviços internos deve ser temporário por `docker exec`, SSH tunnel, VPN ou agente interno autenticado;
+- adicionado `scripts/validate_runtime_contract.py` para bloquear regressão de portas/builds;
+- CI passa a validar que somente o gateway possui host port e usa build apenas no override local;
+- `stack-build.yaml` do Portainer fica deliberadamente desabilitado;
+- rollback Dockge passa a usar override temporário de imagens versionadas e `update.sh` retorna ao canal `latest`.
+
 ## 1.0.0-rc.6 — 2026-08-21
 
 ### Corrigido

@@ -1,22 +1,18 @@
 # Deploy no Dockge
 
-A stack Dockge é **image-only**: ela consome exclusivamente as imagens publicadas no GHCR e não precisa compilar backend/frontend no servidor.
+A stack Dockge é **image-only**: consome exclusivamente imagens publicadas no GHCR e nunca compila backend/frontend no servidor.
 
 ## Pacote recomendado
 
-Nas Releases, use o arquivo dedicado:
+Nas Releases, use:
 
 ```text
 ARGWS-Financial-Platform-v<VERSAO>-Dockge.zip
 ```
 
-Esse pacote já traz `compose.yaml` image-only na raiz da pasta `argws-financial-platform/`, além de `.env.example`, README, manifesto e diretórios `data-*`.
+O bundle traz `compose.yaml`, `.env.example`, README, manifesto, `data-*` e `secrets/` prontos para a pasta da stack. O `compose.yaml` do bundle é o mesmo contrato de runtime canônico do projeto.
 
-**Não extraia o pacote completo de código-fonte diretamente dentro da pasta da stack esperando que o Dockge use o Compose correto.** O pacote completo mantém o `compose.yaml` de desenvolvimento/build na raiz. Para Dockge, use sempre o bundle `-Dockge.zip` ou copie explicitamente `deployments/dockge/compose.yaml` para `compose.yaml` na raiz da stack.
-
-## Estrutura operacional da stack
-
-Com `FINANCIAL_DATA_ROOT=.`, a persistência fica visível dentro da própria pasta da stack:
+## Estrutura operacional
 
 ```text
 argws-financial-platform/
@@ -28,12 +24,15 @@ argws-financial-platform/
 ├── data-minio/
 ├── data-backups/
 ├── data-runtime/
-└── data-celery/
+├── data-celery/
+└── secrets/
+    ├── rclone.conf
+    └── backup-age-identity.txt
 ```
 
-O `compose.yaml` do Dockge não contém `build:` e não referencia `backend/`, `frontend/` ou Dockerfiles locais.
+Com `FINANCIAL_DATA_ROOT=.`, todos os dados ficam visíveis nessa pasta.
 
-## Imagens operacionais
+## Imagens
 
 ```text
 ghcr.io/wkarts/argws-financial-api:latest
@@ -41,60 +40,89 @@ ghcr.io/wkarts/argws-financial-web:latest
 ghcr.io/wkarts/argws-financial-gateway:latest
 ```
 
-`APP_PULL_POLICY=always` mantém o canal operacional em `latest`. As tags versionadas continuam disponíveis somente para auditoria/rollback.
+O runtime usa `pull_policy: always` fixo. As tags versionadas existem somente para auditoria e rollback explícito.
 
-## Persistência
+## Rede: somente uma porta no host
 
-O Dockge não usa volumes nomeados para os dados principais. Cada serviço grava em um bind mount explícito:
+A única publicação de porta é:
 
 ```text
-./data-postgres   -> /var/lib/postgresql/data
-./data-redis      -> /data
-./data-rabbitmq   -> /var/lib/rabbitmq
-./data-minio      -> /data
-./data-backups    -> /data/backups
-./data-runtime    -> /data/runtime
-./data-celery     -> /var/lib/celery
+127.0.0.1:${GATEWAY_PORT}:80
 ```
 
-Se quiser mover todo o conjunto para outro diretório-base, altere `FINANCIAL_DATA_ROOT`; o padrão Dockge é `.`.
+PostgreSQL, Redis, RabbitMQ e MinIO não possuem `ports:` no runtime. As portas internas continuam disponíveis entre containers pela rede `financial-internal`, mas não ficam acessíveis diretamente no host ou na Internet.
+
+O CloudPanel deve apontar o reverse proxy somente para:
+
+```text
+http://127.0.0.1:${GATEWAY_PORT}
+```
+
+## Preflight obrigatório
+
+Antes de iniciar storage/migrations, `financial-preflight` valida a configuração sem rede e sem imprimir segredos. Erros de senha divergente, placeholders, SMTP inválido ou credenciais MinIO/S3 inconsistentes aparecem antes de migrations.
+
+Para executar manualmente:
+
+```bash
+docker compose run --rm financial-preflight
+```
+
+Para reparar placeholders e relações derivadas sem regenerar os segredos reais já válidos:
+
+```bash
+python3 scripts/generate_secrets.py --env .env
+```
+
+Não use `--force` em uma stack com dados sem planejar a rotação das credenciais primárias.
 
 ## Primeira instalação
 
-1. Extraia o bundle `ARGWS-Financial-Platform-v<VERSAO>-Dockge.zip` no diretório de stacks do Dockge.
+1. Extraia o bundle `-Dockge.zip` no diretório de stacks.
 2. Renomeie `.env.example` para `.env`.
-3. Ajuste domínio, porta e segredos.
+3. Ajuste domínio, e-mail e segredos.
 4. Mantenha `FINANCIAL_DATA_ROOT=.`.
-5. Valide com `docker compose config`.
-6. Execute `docker compose pull`.
-7. Execute `docker compose up -d`.
+5. Execute `python3 scripts/generate_secrets.py --env .env` quando os scripts estiverem disponíveis; no bundle mínimo, preencha os placeholders manualmente.
+6. Valide: `docker compose config`.
+7. Baixe: `docker compose pull`.
+8. Suba: `docker compose up -d`.
 
-O Dockge não deve executar `docker compose build` para esta stack. Se aparecer `[+] Building`, o arquivo `compose.yaml` em uso não é o bundle Dockge correto.
+Se aparecer `[+] Building`, algum arquivo diferente do runtime canônico está sendo usado. Nenhum arquivo em `deployments/` contém build local.
 
-## Reverse proxy
+## Build local
 
-O gateway publica somente em loopback:
+Build local é deliberadamente separado de deploy. No checkout completo do repositório:
 
-```text
-127.0.0.1:${GATEWAY_PORT}
+```bash
+docker compose -f compose.yaml -f compose.local-build.yaml up -d --build
 ```
 
-O CloudPanel deve criar um reverse proxy para esse endereço e preservar o cabeçalho `Host`. O mesmo gateway atende plataforma, Control Plane, API e tenants por hostname.
+`compose.local-build.yaml` não é usado pelo Dockge.
 
 ## Atualização
 
-`deployments/dockge/update.sh` reaplica o Compose image-only na raiz, preserva os diretórios `data-*`, executa backup, `docker compose pull` e recria os containers usando `:latest`.
+```bash
+./deployments/dockge/update.sh
+```
+
+O script preserva `data-*`, remove override de rollback, executa backup, volta ao canal `:latest`, faz `pull` e valida readiness.
 
 ## Rollback
 
 ```bash
-./deployments/dockge/rollback.sh 1.0.0-rc.5
+./deployments/dockge/rollback.sh 1.0.0-rc.7
 ```
 
-O rollback troca temporariamente API, Web e Gateway para os aliases imutáveis daquela release sem alterar os diretórios persistentes. Depois, `update.sh` volta ao canal `latest`.
+O rollback cria um override temporário com aliases imutáveis. `financial-preflight` permanece em `latest`. Execute `update.sh` para voltar integralmente ao runtime `:latest`.
 
-## Health check
+## Logs
+
+Os containers usam logging Docker com rotação. Para inspeção operacional local:
 
 ```bash
-./deployments/dockge/healthcheck.sh
+docker compose logs --tail=200 financial-preflight
+docker compose logs --tail=200 financial-migrate
+docker compose logs --tail=200 financial-api
 ```
+
+A arquitetura de auditoria centralizada pelo Control Plane está documentada em `docs/architecture/RUNTIME_EXPOSURE_AND_OPERATIONS.md` e não exige publicação permanente de portas internas.

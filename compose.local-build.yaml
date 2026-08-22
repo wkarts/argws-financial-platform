@@ -1,0 +1,78 @@
+# Uso exclusivamente local/desenvolvimento:
+# docker compose -f compose.yaml -f compose.local-build.yaml up -d --build
+#
+# Nenhum deploy (Dockge, Docker image-only, CloudPanel, Portainer, production,
+# staging) referencia este arquivo. Ele existe apenas para desenvolvimento e CI.
+
+x-local-api-build: &local-api-build
+  context: .
+  dockerfile: backend/Dockerfile
+
+services:
+  financial-preflight:
+    build: *local-api-build
+    image: argws-financial-api:local
+    pull_policy: build
+
+  financial-migrate:
+    build: *local-api-build
+    image: argws-financial-api:local
+    pull_policy: build
+
+  financial-migrate-tenants:
+    build: *local-api-build
+    image: argws-financial-api:local
+    pull_policy: build
+
+  financial-bootstrap:
+    build: *local-api-build
+    image: argws-financial-api:local
+    pull_policy: build
+
+  financial-api:
+    build: *local-api-build
+    image: argws-financial-api:local
+    pull_policy: build
+
+  financial-worker-default:
+    build: *local-api-build
+    image: argws-financial-api:local
+    pull_policy: build
+
+  financial-worker-billing:
+    build: *local-api-build
+    image: argws-financial-api:local
+    pull_policy: build
+
+  financial-worker-notifications:
+    build: *local-api-build
+    image: argws-financial-api:local
+    pull_policy: build
+
+  financial-worker-backups:
+    build: *local-api-build
+    image: argws-financial-api:local
+    pull_policy: build
+
+  financial-beat:
+    build: *local-api-build
+    image: argws-financial-api:local
+    pull_policy: build
+
+  financial-web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_APP_NAME: ${VITE_APP_NAME:-ARGWS Financial Platform}
+        VITE_CONTROL_PLANE_HOST: ${CONTROL_PLANE_HOST:-control.localhost}
+        VITE_API_BASE_URL: /api
+    image: argws-financial-web:local
+    pull_policy: build
+
+  financial-gateway:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/gateway/Dockerfile
+    image: argws-financial-gateway:local
+    pull_policy: build

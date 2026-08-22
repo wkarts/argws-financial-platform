@@ -56,9 +56,13 @@ def replace(lines: list[str], values: dict[str, str]) -> list[str]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Gera segredos consistentes para a stack ARGWS Financial Platform.")
+    parser = argparse.ArgumentParser(description="Gera/repara segredos consistentes para ARGWS Financial Platform.")
     parser.add_argument("--env", type=Path, default=Path(".env"))
-    parser.add_argument("--force", action="store_true", help="Regenera inclusive valores já preenchidos.")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Regenera inclusive credenciais primárias já preenchidas. Não use em stack com dados sem planejar a rotação.",
+    )
     args = parser.parse_args()
     if not args.env.exists():
         raise SystemExit(f"Arquivo não encontrado: {args.env}")
@@ -84,24 +88,54 @@ def main() -> int:
     values: dict[str, str] = {}
     for key, value in generated.items():
         existing = current.get(key, "")
-        if args.force or not existing or existing.startswith("CHANGE_ME"):
+        if args.force or not existing or existing.startswith("CHANGE_ME") or existing.startswith("__CONFIGURE_"):
             values[key] = value
         else:
             values[key] = existing
 
-    # VERSION é a única fonte canônica de versão da aplicação. O .env de runtime
-    # é sempre sincronizado com ela e não deve manter versão copiada manualmente.
+    # VERSION continua sendo a única fonte canônica. Esses campos são apenas
+    # espelhos gerados para ferramentas legadas; os containers publicados leem
+    # a VERSION embutida na imagem.
     values["APP_VERSION"] = version
     values["VITE_APP_VERSION"] = version
 
-    values["POSTGRES_ADMIN_PASSWORD"] = values["POSTGRES_PASSWORD"]
-    # A stack padrão usa o MinIO interno; as credenciais S3 precisam ser exatamente
-    # as credenciais root configuradas no container MinIO. Para S3 externo, ajuste
-    # S3_ACCESS_KEY/S3_SECRET_KEY manualmente depois da geração inicial.
-    values["S3_ACCESS_KEY"] = current.get("MINIO_ROOT_USER") or "financial"
+    # O container oficial do Postgres cria apenas POSTGRES_USER. Se o usuário
+    # administrativo for o mesmo, a senha necessariamente é a mesma.
+    admin_user = current.get("POSTGRES_ADMIN_USER") or current.get("POSTGRES_USER") or "financial_admin"
+    postgres_user = current.get("POSTGRES_USER") or "financial_admin"
+    if admin_user == postgres_user:
+        values["POSTGRES_ADMIN_PASSWORD"] = values["POSTGRES_PASSWORD"]
+    else:
+        existing_admin_password = current.get("POSTGRES_ADMIN_PASSWORD", "")
+        values["POSTGRES_ADMIN_PASSWORD"] = (
+            token(36)
+            if args.force or not existing_admin_password or existing_admin_password.startswith("CHANGE_ME")
+            else existing_admin_password
+        )
+
+    # A stack padrão usa MinIO interno. Quando S3_ACCESS_KEY aponta para o root
+    # do MinIO, o segredo S3 deve acompanhar exatamente a credencial do MinIO.
+    minio_user = current.get("MINIO_ROOT_USER") or "financial"
+    values["S3_ACCESS_KEY"] = minio_user
     values["S3_SECRET_KEY"] = values["MINIO_ROOT_PASSWORD"]
-    values["RABBITMQ_URL"] = f"amqp://{current.get('RABBITMQ_USER','financial')}:{values['RABBITMQ_PASSWORD']}@financial-rabbitmq:5672/financial"
+
+    rabbit_user = current.get("RABBITMQ_USER") or "financial"
+    values["RABBITMQ_URL"] = (
+        f"amqp://{rabbit_user}:{values['RABBITMQ_PASSWORD']}@financial-rabbitmq:5672/financial"
+    )
     values["CELERY_BROKER_URL"] = values["RABBITMQ_URL"]
+
+    # Corrige a grafia inválida que já apareceu em instalações e alinha porta
+    # SMTPS 465 com o modo ssl. O SMTP pode continuar desabilitado.
+    smtp_security = current.get("SMTP_SECURITY", "starttls").strip().lower()
+    smtp_port = current.get("SMTP_PORT", "587").strip()
+    if smtp_security == "startssl":
+        smtp_security = "ssl" if smtp_port == "465" else "starttls"
+    if smtp_port == "465" and smtp_security == "starttls":
+        smtp_security = "ssl"
+    if smtp_security not in {"none", "starttls", "ssl"}:
+        smtp_security = "starttls"
+    values["SMTP_SECURITY"] = smtp_security
 
     final_lines = replace(lines, values)
     args.env.write_text("\n".join(final_lines) + "\n", encoding="utf-8")
@@ -128,9 +162,11 @@ def main() -> int:
     ])
     credentials.write_text("\n".join(credential_lines) + "\n", encoding="utf-8")
     credentials.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
     print(f"Versão sincronizada: {version}")
-    print(f"Segredos gravados em {args.env}")
+    print(f"Segredos e dependências reparados em {args.env}")
     print(f"Credenciais iniciais gravadas em {credentials}")
+    print("Execute o preflight antes do deploy: docker compose run --rm financial-preflight")
     return 0
 
 
