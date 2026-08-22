@@ -9,6 +9,18 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+PERSISTENT_DIRS = (
+    "data-postgres",
+    "data-redis",
+    "data-rabbitmq",
+    "data-minio",
+    "data-backups",
+    "data-runtime",
+    "data-celery",
+    "data-acme",
+    "data-certs",
+    "data-cloudpanel-agent",
+)
 
 
 def sha256(path: Path) -> str:
@@ -20,7 +32,7 @@ def sha256(path: Path) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Empacota a stack Dockge image-only pronta para extração.")
+    parser = argparse.ArgumentParser(description="Empacota a stack Dockge/CloudPanel image-only pronta para extração.")
     parser.add_argument("--output-dir", type=Path, default=ROOT.parent)
     args = parser.parse_args()
 
@@ -44,14 +56,19 @@ def main() -> int:
     compose_text = compose.read_text(encoding="utf-8")
     if "build:" in compose_text:
         raise SystemExit("Compose Dockge ainda contém build local")
-    if "ghcr.io/wkarts/argws-financial-api:latest" not in compose_text:
-        raise SystemExit("Compose Dockge não usa API GHCR :latest")
-    if "financial-preflight" not in compose_text:
-        raise SystemExit("Compose Dockge não contém preflight de configuração")
-    for folder in (
-        "data-postgres", "data-redis", "data-rabbitmq", "data-minio",
-        "data-backups", "data-runtime", "data-celery", "secrets",
+    for image in (
+        "ghcr.io/wkarts/argws-financial-api:latest",
+        "ghcr.io/wkarts/argws-financial-web:latest",
+        "ghcr.io/wkarts/argws-financial-gateway:latest",
+        "ghcr.io/wkarts/argws-financial-acme:latest",
+        "ghcr.io/wkarts/argws-financial-cloudpanel-agent:latest",
     ):
+        if image not in compose_text:
+            raise SystemExit(f"Compose Dockge não usa imagem esperada: {image}")
+    for service in ("financial-preflight", "financial-domain-init", "financial-acme", "financial-cloudpanel-agent"):
+        if service not in compose_text:
+            raise SystemExit(f"Compose Dockge não contém {service}")
+    for folder in (*PERSISTENT_DIRS, "secrets"):
         if folder not in compose_text:
             raise SystemExit(f"Compose Dockge não referencia {folder}")
 
@@ -61,10 +78,8 @@ def main() -> int:
         (root / "compose.yaml").write_bytes(compose.read_bytes())
         (root / ".env.example").write_bytes(env_example.read_bytes())
         (root / "README.md").write_bytes(readme.read_bytes())
-        for folder in (
-            "data-postgres", "data-redis", "data-rabbitmq", "data-minio",
-            "data-backups", "data-runtime", "data-celery", "secrets",
-        ):
+
+        for folder in (*PERSISTENT_DIRS, "secrets"):
             directory = root / folder
             directory.mkdir()
             (directory / ".gitkeep").write_text("", encoding="utf-8")
@@ -72,18 +87,21 @@ def main() -> int:
         (root / "secrets" / "backup-age-identity.txt").write_text("", encoding="utf-8")
 
         manifest = {
-            "application": "ARGWS Financial Platform",
+            "application": "ARGWS Financeiro",
             "version": version,
-            "deployment": "dockge",
+            "deployment": "dockge-cloudpanel",
             "mode": "image-only",
-            "runtime_images": "latest",
+            "runtime_images": "ghcr-latest",
             "published_ports": ["financial-gateway"],
             "data_root": ".",
-            "persistent_directories": [
-                "data-postgres", "data-redis", "data-rabbitmq", "data-minio",
-                "data-backups", "data-runtime", "data-celery",
-            ],
-            "internal_only_services": ["postgres", "redis", "rabbitmq", "minio"],
+            "persistent_directories": list(PERSISTENT_DIRS),
+            "internal_only_services": ["postgres", "redis", "rabbitmq", "minio", "acme"],
+            "automatic_domain_runtime": {
+                "dns": "cloudflare-wildcard",
+                "certificate": "acme-dns01",
+                "cloudpanel": "host-agent-clpctl",
+                "manual_step": "single-reverse-proxy",
+            },
         }
         (root / "DOCKGE_PACKAGE.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -107,6 +125,8 @@ def main() -> int:
             "argws-financial-platform/secrets/rclone.conf",
             "argws-financial-platform/secrets/backup-age-identity.txt",
         }
+        for folder in PERSISTENT_DIRS:
+            expected.add(f"argws-financial-platform/{folder}/.gitkeep")
         missing = expected - names
         if missing:
             raise SystemExit(f"Pacote Dockge incompleto: {sorted(missing)}")
