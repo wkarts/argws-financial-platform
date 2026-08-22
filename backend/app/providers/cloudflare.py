@@ -129,43 +129,59 @@ class CloudflareDNSProvider:
     async def ensure_managed_wildcard(self) -> DNSRecordResult:
         """Garante origem DNS-only e wildcard usados pelos domínios internos.
 
-        Quando o alvo configurado é diferente do domínio principal (recomendado:
-        ``proxy.<PLATFORM_DOMAIN>``), o registro de origem é derivado do registro DNS
-        atual do domínio principal via API Cloudflare. Assim não é necessário repetir
-        o IP público no `.env`, e o tráfego do wildcard pode chegar diretamente ao
-        CloudPanel para usar o certificado ACME local.
+        Em ``wildcard`` o registro é infraestrutura compartilhada da plataforma.
+        A criação/renovação de certificado fica com ACME e a publicação no host com
+        CloudPanel. Se um token restrito conseguir operar o DNS-01 do ACME, mas a
+        API REST negar leitura/reconciliação com 401/403, o tenant não deve ser
+        marcado como falho por causa dessa dependência externa já compartilhada.
+
+        Fora desse caso, erros continuam sendo propagados normalmente.
         """
 
         wildcard = f"*.{settings.tenant_domain_root}".lower().strip(".")
         platform = settings.platform_domain.lower().strip().rstrip(".")
         target = (settings.cloudflare_tenant_record_target or platform).lower().strip().rstrip(".")
 
-        if target != platform:
-            platform_records = await self.list_records(platform)
-            source = next(
-                (
-                    item
-                    for record_type in ("A", "AAAA", "CNAME")
-                    for item in platform_records
-                    if str(item.get("type", "")).upper() == record_type
-                ),
-                None,
-            )
-            if source is None:
-                raise APIError(
-                    "CLOUDFLARE_ORIGIN_NOT_FOUND",
-                    "Não foi possível derivar a origem DNS do domínio principal para criar o wildcard.",
-                    409,
-                    {"hostname": platform},
+        try:
+            if target != platform:
+                platform_records = await self.list_records(platform)
+                source = next(
+                    (
+                        item
+                        for record_type in ("A", "AAAA", "CNAME")
+                        for item in platform_records
+                        if str(item.get("type", "")).upper() == record_type
+                    ),
+                    None,
                 )
-            await self.upsert_record(
-                target,
-                str(source.get("content", "")),
-                record_type=str(source.get("type", "A")),
-                proxied=False,
-            )
+                if source is None:
+                    raise APIError(
+                        "CLOUDFLARE_ORIGIN_NOT_FOUND",
+                        "Não foi possível derivar a origem DNS do domínio principal para criar o wildcard.",
+                        409,
+                        {"hostname": platform},
+                    )
+                await self.upsert_record(
+                    target,
+                    str(source.get("content", "")),
+                    record_type=str(source.get("type", "A")),
+                    proxied=False,
+                )
 
-        return await self.upsert_cname(wildcard, target, proxied=False)
+            return await self.upsert_cname(wildcard, target, proxied=False)
+        except httpx.HTTPStatusError as exc:
+            if (
+                settings.cloudflare_provisioning_mode == "wildcard"
+                and exc.response.status_code in {401, 403}
+            ):
+                return DNSRecordResult(
+                    record_id="",
+                    name=wildcard,
+                    content=target,
+                    proxied=False,
+                    record_type="EXTERNAL_WILDCARD",
+                )
+            raise
 
     async def delete_record(self, record_id: str) -> None:
         if not self.configured or not record_id:
