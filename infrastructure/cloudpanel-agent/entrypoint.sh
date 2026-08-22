@@ -6,10 +6,14 @@ CERT_DIR="${CERT_DIR:-/certs}"
 STATE_DIR="${STATE_DIR:-/state}"
 SITE_DOMAIN="${CLOUDPANEL_SITE_DOMAIN:?CLOUDPANEL_SITE_DOMAIN obrigatório}"
 WILDCARD_DOMAIN="${CLOUDPANEL_WILDCARD_DOMAIN:-*.$SITE_DOMAIN}"
+SITE_USER="${CLOUDPANEL_SITE_USER:-financial}"
+SITE_PASSWORD="${CLOUDPANEL_SITE_USER_PASSWORD:-}"
+REVERSE_PROXY_URL="${CLOUDPANEL_REVERSE_PROXY_URL:-http://127.0.0.1:${GATEWAY_PORT:-18800}}"
 SYNC_INTERVAL="${CLOUDPANEL_SYNC_INTERVAL_SECONDS:-60}"
 HOST_TMP_REL="/run/argws-financial-cloudpanel-agent"
 HOST_TMP="$HOST_ROOT$HOST_TMP_REL"
 STATE_FILE="$STATE_DIR/installed.sha256"
+VHOST_PATH=""
 
 log() {
   printf '%s [financial-cloudpanel-agent] %s\n' "$(date -Iseconds)" "$*"
@@ -41,6 +45,44 @@ find_vhost() {
     fi
   done < <(find "$HOST_ROOT/etc/nginx/sites-enabled" -maxdepth 1 -type f -name '*.conf' -print 2>/dev/null | sort)
 
+  return 1
+}
+
+ensure_reverse_proxy() {
+  if VHOST_PATH="$(find_vhost)"; then
+    return 0
+  fi
+
+  if [[ -z "$SITE_PASSWORD" || "$SITE_PASSWORD" == CHANGE_ME* ]]; then
+    log "Reverse Proxy $SITE_DOMAIN ausente e CLOUDPANEL_SITE_USER_PASSWORD não está configurada"
+    return 1
+  fi
+
+  log "Reverse Proxy $SITE_DOMAIN ausente; criando automaticamente para $REVERSE_PROXY_URL"
+  if ! host_exec clpctl site:add:reverse-proxy \
+      --domainName="$SITE_DOMAIN" \
+      --reverseProxyUrl="$REVERSE_PROXY_URL" \
+      --siteUser="$SITE_USER" \
+      --siteUserPassword="$SITE_PASSWORD"; then
+    # Pode haver corrida com uma criação externa. Se o VHost apareceu, seguimos.
+    if VHOST_PATH="$(find_vhost)"; then
+      log "Reverse Proxy já apareceu no CloudPanel durante a reconciliação"
+      return 0
+    fi
+    log "clpctl não conseguiu criar o Reverse Proxy $SITE_DOMAIN; nova tentativa em ${SYNC_INTERVAL}s"
+    return 1
+  fi
+
+  local attempt
+  for attempt in $(seq 1 15); do
+    if VHOST_PATH="$(find_vhost)"; then
+      log "Reverse Proxy criado automaticamente: $SITE_DOMAIN -> $REVERSE_PROXY_URL"
+      return 0
+    fi
+    sleep 1
+  done
+
+  log "clpctl concluiu, mas o VHost $SITE_DOMAIN ainda não apareceu em sites-enabled"
   return 1
 }
 
@@ -192,7 +234,7 @@ install_certificate() {
 
 mkdir -p "$STATE_DIR"
 chmod 0700 "$STATE_DIR"
-log "Agente iniciado; aguardando o Reverse Proxy $SITE_DOMAIN criado no CloudPanel"
+log "Agente iniciado; garantindo Reverse Proxy, wildcard e certificado de $SITE_DOMAIN"
 
 while :; do
   if ! host_ready; then
@@ -201,13 +243,12 @@ while :; do
     continue
   fi
 
-  if ! vhost="$(find_vhost)"; then
-    log "Reverse Proxy/VHost $SITE_DOMAIN ainda não existe; nenhuma alteração realizada"
+  if ! ensure_reverse_proxy; then
     sleep "$SYNC_INTERVAL"
     continue
   fi
 
-  if ! reconcile_vhost "$vhost"; then
+  if ! reconcile_vhost "$VHOST_PATH"; then
     log "VHost localizado, mas não foi possível reconciliar o wildcard com segurança"
     sleep "$SYNC_INTERVAL"
     continue

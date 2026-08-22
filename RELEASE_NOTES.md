@@ -1,25 +1,45 @@
-# Release Notes — v1.0.0-rc.11
+# Release Notes — v1.0.0-rc.12
 
-Esta release corrige a etapa de inicialização de domínios da **ARGWS Financial Platform** sem alterar a arquitetura da stack.
+Esta release corrige o fluxo de provisionamento e a experiência visual da **ARGWS Financial Platform**, preservando a arquitetura image-only e os serviços existentes.
 
-## Domain bootstrap não bloqueante
+## Provisionamento operacional
 
-O `financial-domain-init` continua tentando reconciliar automaticamente o wildcard `*.finance.argws.com.br` na Cloudflare, porém falhas externas de DNS/API não derrubam mais a plataforma inteira.
+- tenants só entram nas tarefas periódicas quando o domínio primário também está `ACTIVE`, eliminando erros repetitivos de `DOMAIN_NOT_ACTIVE` para ambientes ainda em reconciliação;
+- o domínio provisionado passa a reconciliar o wildcard Cloudflare antes de ser marcado como ativo;
+- falhas de DNS ficam registradas no job e no domínio, em vez de produzir um falso sucesso;
+- o bootstrap recupera automaticamente o tenant demo existente quando ele ficou incompleto em uma execução anterior;
+- ao criar ou reprocessar um tenant, o Control Plane abre diretamente o job correspondente e acompanha o progresso automaticamente;
+- domínios `PROVISIONED` deixam de exibir a ação manual de verificação destinada a domínios `CUSTOM`.
 
-Se a Cloudflare estiver temporariamente indisponível, o token não tiver permissão suficiente ou o domínio base ainda não possuir um registro de origem utilizável, o serviço passa a emitir um relatório JSON com `status: DEGRADED`, `blocking: false` e os detalhes do erro, retornando sucesso para liberar PostgreSQL, Redis, RabbitMQ, MinIO, migrações, API e workers.
+## CloudPanel automático
 
-A validação de configuração continua sendo feita pelo `financial-preflight`; esta alteração não remove a checagem de secrets, Cloudflare, ACME ou CloudPanel.
+O `financial-cloudpanel-agent` passa a criar o Reverse Proxy `finance.argws.com.br` automaticamente via `clpctl site:add:reverse-proxy` quando o VHost ainda não existe, usando o usuário e a senha configurados no `.env` e apontando por padrão para `http://127.0.0.1:18800`.
 
-## Infraestrutura preservada
+Depois da criação, o agente mantém a reconciliação do wildcard e a instalação do certificado.
 
-- nome oficial: `ARGWS Financial Platform`;
-- domínio público: `finance.argws.com.br`;
-- demo: `demo.finance.argws.com.br`;
-- Control Plane: `control.finance.argws.com.br`;
-- API: `api.finance.argws.com.br`;
-- tenants: `*.finance.argws.com.br`;
-- 24 serviços preservados;
-- Prometheus e Grafana continuam internos;
-- somente `financial-gateway` publica porta no host;
-- produção continua image-only via GHCR;
-- Dockge/CloudPanel continuam usando YAML plano, sem anchors/aliases.
+## Prometheus
+
+O hostname interno `financial-api` passa a ser aceito pelo `TrustedHostMiddleware`, permitindo que o Prometheus faça scrape de `/metrics` sem receber HTTP 400.
+
+## Interface e responsividade
+
+- shell administrativo mais compacto;
+- sidebar reduzida e adequada a telas menores;
+- header e espaçamentos reduzidos;
+- botões, inputs, cards e tabelas com densidade melhor;
+- tabelas agora usam rolagem horizontal no mobile, em vez de conteúdo cortado;
+- criação e reprocessamento de tenant exibem progresso real;
+- tela de provisionamento possui atualização automática e drawer de eventos atualizado;
+- landing pública de `finance.argws.com.br` foi redesenhada com escala menor, conteúdo objetivo, CTAs para demo e Control Plane e responsividade dedicada.
+
+## Topologia preservada
+
+- `finance.argws.com.br` — landing pública;
+- `demo.finance.argws.com.br` — demonstração;
+- `control.finance.argws.com.br` — Control Plane;
+- `admin.finance.argws.com.br` — alias administrativo;
+- `api.finance.argws.com.br` — API;
+- `*.finance.argws.com.br` — tenants;
+- Prometheus e Grafana permanecem na stack;
+- somente o gateway publica porta no host;
+- produção continua image-only via GHCR.

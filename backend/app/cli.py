@@ -3,19 +3,20 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import click
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.core.security import hash_password
 from app.db.platform import PlatformSessionLocal
 from app.db.tenant import tenant_engines
 from app.legacy import FinancialVitorImporter
-from app.models.platform import PlatformUser, Tenant
+from app.models.platform import PlatformUser, ProvisioningJob, Tenant
 from app.models.tenant import Company, ServiceCatalog
 from app.schemas.control import TenantCreate
 from app.services.backup import BackupService
@@ -23,7 +24,6 @@ from app.services.bootstrap_defaults import ensure_platform_defaults, ensure_ten
 from app.services.provisioning import provisioning_service
 from app.services.restore import RestoreService
 from app.services.tenant_resolver import TenantResolver
-
 
 
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -60,7 +60,11 @@ async def bootstrap_async() -> None:
         else:
             click.echo("Administrador do Control Plane já existe.")
         if settings.bootstrap_demo_tenant:
-            tenant = await session.scalar(select(Tenant).where(Tenant.slug == settings.demo_tenant_slug))
+            tenant = await session.scalar(
+                select(Tenant)
+                .where(Tenant.slug == settings.demo_tenant_slug)
+                .options(selectinload(Tenant.domains))
+            )
             if tenant is None:
                 tenant, job = await provisioning_service.create_request(
                     session,
@@ -78,7 +82,40 @@ async def bootstrap_async() -> None:
                 await provisioning_service.provision(str(job.id))
                 click.echo(f"Tenant demo provisionado: {settings.tenant_hostname(tenant.slug)}")
             else:
-                click.echo("Tenant demo já existe.")
+                primary = next((item for item in tenant.domains if item.is_primary), None)
+                operational = tenant.status == "ACTIVE" and primary is not None and primary.status == "ACTIVE"
+                if operational:
+                    click.echo("Tenant demo já existe e está operacional.")
+                else:
+                    previous = await session.scalar(
+                        select(ProvisioningJob)
+                        .where(ProvisioningJob.tenant_id == tenant.id)
+                        .order_by(ProvisioningJob.created_at.desc())
+                    )
+                    if previous is None or not previous.payload:
+                        click.echo("Tenant demo existe, mas não há payload para reconciliar automaticamente.")
+                    else:
+                        if previous.status in {"PENDING", "RUNNING"}:
+                            job = previous
+                        else:
+                            job = ProvisioningJob(
+                                tenant_id=tenant.id,
+                                operation="PROVISION",
+                                status="PENDING",
+                                current_step="BOOTSTRAP_RECONCILE",
+                                progress=0,
+                                correlation_id=uuid4().hex,
+                                payload=previous.payload,
+                            )
+                            job.add_event(
+                                "BOOTSTRAP_RECONCILE",
+                                "Tenant demo existente está incompleto; reconciliação automática iniciada.",
+                            )
+                            session.add(job)
+                        tenant.status = "PROVISIONING"
+                        await session.commit()
+                        await provisioning_service.provision(str(job.id))
+                        click.echo(f"Tenant demo reconciliado: {settings.tenant_hostname(tenant.slug)}")
 
 
 @click.group()

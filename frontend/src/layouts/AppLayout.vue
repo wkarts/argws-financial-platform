@@ -114,53 +114,53 @@ onMounted(refreshContext)
   <div class="min-h-screen bg-slate-50">
     <div v-if="app.sidebarOpen" class="fixed inset-0 z-30 bg-slate-950/50 backdrop-blur-sm lg:hidden" @click="app.sidebarOpen = false" />
 
-    <aside class="fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r border-slate-800 bg-slate-950 text-white transition-transform duration-200 lg:translate-x-0" :class="app.sidebarOpen ? 'translate-x-0' : '-translate-x-full'">
-      <div class="flex h-20 items-center gap-3 border-b border-slate-800 px-5">
-        <div class="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-teal-500/15 text-teal-300"><BadgeDollarSign :size="26" /></div>
-        <div class="min-w-0"><p class="truncate text-sm font-bold">{{ appName }}</p><p class="truncate text-xs text-slate-400">{{ planeLabel }}</p></div>
-        <button class="ml-auto rounded-lg p-2 text-slate-400 hover:bg-slate-800 lg:hidden" aria-label="Fechar menu" @click="app.sidebarOpen = false"><X :size="20" /></button>
+    <aside class="fixed inset-y-0 left-0 z-40 flex w-64 max-w-[86vw] flex-col border-r border-slate-800 bg-slate-950 text-white transition-transform duration-200 lg:translate-x-0" :class="app.sidebarOpen ? 'translate-x-0' : '-translate-x-full'">
+      <div class="flex h-16 items-center gap-2.5 border-b border-slate-800 px-4">
+        <div class="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-teal-500/15 text-teal-300"><BadgeDollarSign :size="22" /></div>
+        <div class="min-w-0"><p class="truncate text-[13px] font-bold">{{ appName }}</p><p class="truncate text-[11px] text-slate-400">{{ planeLabel }}</p></div>
+        <button class="ml-auto rounded-lg p-2 text-slate-400 hover:bg-slate-800 lg:hidden" aria-label="Fechar menu" @click="app.sidebarOpen = false"><X :size="18" /></button>
       </div>
 
-      <nav class="flex-1 overflow-y-auto p-4">
-        <section v-for="group in groups" :key="group.label" class="mb-5">
-          <p class="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">{{ group.label }}</p>
-          <div class="space-y-1">
-            <RouterLink v-for="item in group.items" :key="item.to" :to="item.to" class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition" :class="isActive(item.to) ? 'bg-teal-500/15 text-teal-300 shadow-inner' : 'text-slate-300 hover:bg-slate-900 hover:text-white'" @click="app.sidebarOpen = false">
-              <component :is="item.icon" :size="19" /><span class="min-w-0 flex-1 truncate">{{ item.label }}</span><span v-if="item.badge" class="rounded-full bg-slate-800 px-2 py-0.5 text-[10px]">{{ item.badge }}</span>
+      <nav class="flex-1 overflow-y-auto p-3">
+        <section v-for="group in groups" :key="group.label" class="mb-4">
+          <p class="mb-1.5 px-2.5 text-[9px] font-bold uppercase tracking-[0.16em] text-slate-500">{{ group.label }}</p>
+          <div class="space-y-0.5">
+            <RouterLink v-for="item in group.items" :key="item.to" :to="item.to" class="flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] font-medium transition" :class="isActive(item.to) ? 'bg-teal-500/15 text-teal-300 shadow-inner' : 'text-slate-300 hover:bg-slate-900 hover:text-white'" @click="app.sidebarOpen = false">
+              <component :is="item.icon" :size="17" /><span class="min-w-0 flex-1 truncate">{{ item.label }}</span><span v-if="item.badge" class="rounded-full bg-slate-800 px-2 py-0.5 text-[9px]">{{ item.badge }}</span>
             </RouterLink>
           </div>
         </section>
       </nav>
 
-      <div class="border-t border-slate-800 p-4">
-        <div class="mb-3 rounded-xl bg-slate-900 p-3">
-          <p class="truncate text-sm font-semibold">{{ auth.user?.name }}</p>
-          <p class="truncate text-xs text-slate-400">{{ auth.user?.email }}</p>
-          <p class="mt-2 inline-flex rounded-full bg-slate-800 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-300">{{ auth.user?.role }}</p>
+      <div class="border-t border-slate-800 p-3">
+        <div class="mb-2 rounded-lg bg-slate-900 p-2.5">
+          <p class="truncate text-[13px] font-semibold">{{ auth.user?.name }}</p>
+          <p class="truncate text-[11px] text-slate-400">{{ auth.user?.email }}</p>
+          <p class="mt-1.5 inline-flex rounded-full bg-slate-800 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-slate-300">{{ auth.user?.role }}</p>
         </div>
-        <button class="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-300 hover:bg-slate-900 hover:text-white" @click="logout"><LogOut :size="18" /> Sair</button>
+        <button class="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] text-slate-300 hover:bg-slate-900 hover:text-white" @click="logout"><LogOut :size="17" /> Sair</button>
       </div>
     </aside>
 
-    <div class="lg:pl-72">
-      <header class="sticky top-0 z-20 flex h-20 items-center border-b border-slate-200 bg-white/90 px-4 backdrop-blur sm:px-6 lg:px-8">
-        <button class="rounded-xl border border-slate-200 p-2.5 text-slate-600 lg:hidden" aria-label="Abrir menu" @click="app.sidebarOpen = true"><Menu :size="20" /></button>
-        <div class="ml-3 min-w-0 lg:ml-0">
-          <p class="truncate text-sm font-semibold text-slate-900">{{ currentTitle }}</p>
-          <p class="truncate text-xs text-slate-400">{{ auth.isControlPlane ? 'control plane isolado' : app.tenant?.hostname || 'tenant plane' }}</p>
+    <div class="min-w-0 lg:pl-64">
+      <header class="sticky top-0 z-20 flex h-16 items-center border-b border-slate-200 bg-white/95 px-3 backdrop-blur sm:px-4 lg:px-6">
+        <button class="rounded-lg border border-slate-200 p-2 text-slate-600 lg:hidden" aria-label="Abrir menu" @click="app.sidebarOpen = true"><Menu :size="19" /></button>
+        <div class="ml-2.5 min-w-0 lg:ml-0">
+          <p class="truncate text-[13px] font-semibold text-slate-900">{{ currentTitle }}</p>
+          <p class="truncate text-[11px] text-slate-400">{{ auth.isControlPlane ? 'control plane isolado' : app.tenant?.hostname || 'tenant plane' }}</p>
         </div>
-        <div class="ml-auto flex items-center gap-2">
-          <button v-if="!auth.isControlPlane" class="rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50" title="Atualizar contexto" @click="refreshContext"><RefreshCw :size="18" /></button>
+        <div class="ml-auto flex items-center gap-1.5">
+          <button v-if="!auth.isControlPlane" class="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50" title="Atualizar contexto" @click="refreshContext"><RefreshCw :size="17" /></button>
           <div class="relative">
-            <button class="rounded-xl border border-slate-200 p-2.5 text-slate-600 hover:bg-slate-50" aria-label="Notificações" @click="notificationsOpen = !notificationsOpen"><Bell :size="19" /></button>
-            <div v-if="notificationsOpen" class="absolute right-0 mt-2 w-80 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
-              <div class="flex items-center justify-between"><p class="font-semibold">Central operacional</p><ChevronDown :size="16" class="text-slate-400" /></div>
-              <p class="mt-3 text-sm leading-6 text-slate-500">Alertas de cobrança, integrações, filas, domínios e backups aparecem nos respectivos painéis operacionais.</p>
+            <button class="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50" aria-label="Notificações" @click="notificationsOpen = !notificationsOpen"><Bell :size="18" /></button>
+            <div v-if="notificationsOpen" class="absolute right-0 mt-2 w-[min(19rem,calc(100vw-1.5rem))] rounded-xl border border-slate-200 bg-white p-3.5 shadow-xl">
+              <div class="flex items-center justify-between"><p class="text-sm font-semibold">Central operacional</p><ChevronDown :size="15" class="text-slate-400" /></div>
+              <p class="mt-2 text-[13px] leading-5 text-slate-500">Alertas de cobrança, integrações, filas, domínios e backups aparecem nos respectivos painéis operacionais.</p>
             </div>
           </div>
         </div>
       </header>
-      <main class="p-4 sm:p-6 lg:p-8"><RouterView /></main>
+      <main class="min-w-0 p-3 sm:p-4 lg:p-6"><RouterView /></main>
     </div>
   </div>
 </template>
