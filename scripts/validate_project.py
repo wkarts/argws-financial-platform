@@ -52,31 +52,18 @@ def parse_env(path: Path) -> dict[str, str]:
 
 def required_files() -> None:
     paths = [
-        "README.md",
-        "VERSION",
-        "CHANGELOG.md",
-        "RELEASE_NOTES.md",
-        ".env.example",
-        "compose.yaml",
-        "compose.local-build.yaml",
-        "backend/Dockerfile",
-        "backend/app/version.py",
-        "backend/app/preflight.py",
-        "backend/app/domain_bootstrap.py",
-        "backend/app/workers/celery_app.py",
-        "frontend/Dockerfile",
-        "frontend/vite.config.ts",
-        "frontend/src/pages/LoginPage.vue",
-        "scripts/generate_secrets.py",
-        "scripts/package_release.py",
-        "scripts/package_dockge_stack.py",
-        "scripts/validate_dockge_runtime.py",
-        "scripts/validate_runtime_contract.py",
-        "deployments/dockge/compose.yaml",
-        "deployments/dockge/.env.example",
-        "deployments/cloudpanel/compose.yaml",
-        "deployments/cloudpanel/.env.example",
-        ".github/workflows/ci.yml",
+        "README.md", "VERSION", "CHANGELOG.md", "RELEASE_NOTES.md", ".env.example",
+        "compose.yaml", "compose.local-build.yaml", "backend/Dockerfile", "backend/app/version.py",
+        "backend/app/preflight.py", "backend/app/domain_bootstrap.py", "backend/app/workers/celery_app.py",
+        "frontend/Dockerfile", "frontend/vite.config.ts", "frontend/src/pages/LoginPage.vue",
+        "frontend/src/stores/auth.ts", "scripts/generate_secrets.py", "scripts/package_release.py",
+        "scripts/package_dockge_stack.py", "scripts/validate_dockge_runtime.py",
+        "scripts/validate_runtime_contract.py", "scripts/validate_deployment_parity.py",
+        "deployments/dockge/compose.yaml", "deployments/dockge/.env.example",
+        "deployments/cloudpanel/compose.yaml", "deployments/cloudpanel/.env.example",
+        "deployments/portainer/stack.yaml", "deployments/portainer/stack.env.example",
+        "infrastructure/docker/gateway/Dockerfile", "infrastructure/nginx/gateway.conf.template",
+        "infrastructure/docker/gateway/landing/index.html", ".github/workflows/ci.yml",
         ".github/workflows/publish.yml",
     ]
     for relative in paths:
@@ -129,11 +116,7 @@ def validate_yaml() -> None:
 
 def run_validator(relative: str) -> None:
     result = subprocess.run(
-        [sys.executable, str(ROOT / relative)],
-        cwd=ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
+        [sys.executable, str(ROOT / relative)], cwd=ROOT, capture_output=True, text=True, check=False
     )
     if result.returncode:
         detail = (result.stderr or result.stdout).strip()
@@ -150,24 +133,31 @@ def validate_env_examples() -> None:
 
     dockge = parse_env(ROOT / "deployments/dockge/.env.example")
     required = {
-        "PLATFORM_DOMAIN",
-        "CONTROL_PLANE_HOST",
-        "API_HOST",
-        "TENANT_DOMAIN_ROOT",
-        "FINANCIAL_DATA_ROOT",
-        "INTERNAL_SERVICES_PASSWORD",
-        "INITIAL_ADMIN_PASSWORD",
-        "CLOUDFLARE_API_TOKEN",
-        "CLOUDFLARE_ZONE_ID",
-        "ACME_DOMAIN",
-        "CLOUDPANEL_SITE_DOMAIN",
-        "CLOUDPANEL_WILDCARD_DOMAIN",
+        "APP_NAME", "PLATFORM_DOMAIN", "CONTROL_PLANE_HOST", "ADMIN_HOST", "API_HOST", "DEMO_HOST",
+        "TENANT_DOMAIN_ROOT", "FINANCIAL_DATA_ROOT", "POSTGRES_PASSWORD", "POSTGRES_ADMIN_PASSWORD",
+        "RABBITMQ_PASSWORD", "S3_SECRET_KEY", "MINIO_ROOT_PASSWORD", "PLATFORM_ADMIN_PASSWORD",
+        "DOMAIN_RECONCILIATION_TOKEN", "BANKING_WEBHOOK_SECRET", "CLOUDFLARE_API_TOKEN",
+        "CLOUDFLARE_ZONE_ID", "ACME_DOMAIN", "CLOUDPANEL_SITE_DOMAIN", "CLOUDPANEL_WILDCARD_DOMAIN",
+        "PROMETHEUS_ENABLED", "GRAFANA_ADMIN_PASSWORD",
     }
     missing = sorted(required - set(dockge))
     if missing:
         error(f"Exemplo Dockge incompleto: {missing}")
     if dockge.get("FINANCIAL_DATA_ROOT") != ".":
         error("FINANCIAL_DATA_ROOT do Dockge precisa ser .")
+    expected = {
+        "APP_NAME": "ARGWS Financial Platform",
+        "PLATFORM_DOMAIN": "finance.argws.com.br",
+        "CONTROL_PLANE_HOST": "control.finance.argws.com.br",
+        "ADMIN_HOST": "admin.finance.argws.com.br",
+        "API_HOST": "api.finance.argws.com.br",
+        "DEMO_HOST": "demo.finance.argws.com.br",
+        "TENANT_DOMAIN_ROOT": "finance.argws.com.br",
+        "VITE_APP_NAME": "ARGWS Financial Platform",
+    }
+    for key, value in expected.items():
+        if dockge.get(key) != value:
+            error(f"Exemplo Dockge: {key} deve ser {value!r}")
 
 
 def validate_versioning() -> None:
@@ -194,18 +184,11 @@ def validate_versioning() -> None:
 
 def validate_product_copy() -> None:
     login = (ROOT / "frontend/src/pages/LoginPage.vue").read_text(encoding="utf-8")
-    forbidden = {
-        "FastAPI",
-        "PostgreSQL",
-        "Vue 3",
-        "Python 3",
-        "SaaS financeiro multitenant",
-        "Isolamento por tenant",
-    }
+    forbidden = {"FastAPI", "PostgreSQL", "Vue 3", "Python 3", "SaaS financeiro multitenant", "Isolamento por tenant"}
     leaked = sorted(term for term in forbidden if term.lower() in login.lower())
     if leaked:
         error(f"Login expõe tecnologia/arquitetura interna: {leaked}")
-    for expected in ("ARGWS Financeiro", "Gestão financeira integrada", "Ambiente protegido"):
+    for expected in ("Gestão financeira integrada", "Ambiente protegido"):
         if expected not in login:
             error(f"Login profissional sem texto esperado: {expected}")
 
@@ -253,32 +236,20 @@ def write_report() -> None:
         "warnings": WARNINGS,
         "errors": ERRORS,
     }
-    (ROOT / "VALIDATION_REPORT.json").write_text(
-        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    (ROOT / "VALIDATION_REPORT.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     lines = [
-        "# Validation Report",
-        "",
-        f"Status: **{report['status']}**",
-        "",
-        "## Metrics",
-        *[f"- {key}: {value}" for key, value in sorted(METRICS.items())],
-        "",
-        "## Warnings",
-        *([f"- {item}" for item in WARNINGS] or ["- Nenhum"]),
-        "",
-        "## Errors",
-        *([f"- {item}" for item in ERRORS] or ["- Nenhum"]),
-        "",
+        "# Validation Report", "", f"Status: **{report['status']}**", "", "## Metrics",
+        *[f"- {key}: {value}" for key, value in sorted(METRICS.items())], "", "## Warnings",
+        *([f"- {item}" for item in WARNINGS] or ["- Nenhum"]), "", "## Errors",
+        *([f"- {item}" for item in ERRORS] or ["- Nenhum"]), "",
     ]
     (ROOT / "VALIDATION_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Valida ARGWS Financeiro")
+    parser = argparse.ArgumentParser(description="Valida ARGWS Financial Platform")
     parser.add_argument("--allow-runtime-files", action="store_true")
     args = parser.parse_args()
-
     required_files()
     validate_python()
     validate_shell()
@@ -293,7 +264,6 @@ def main() -> int:
     run_validator("scripts/validate_runtime_contract.py")
     run_validator("scripts/validate_dockge_runtime.py")
     write_report()
-
     if ERRORS:
         for item in ERRORS:
             print(f"[ERRO] {item}")

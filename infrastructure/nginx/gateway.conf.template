@@ -22,6 +22,7 @@ server {
 
     location = /health/live { proxy_pass http://financial_api; }
     location = /health/ready { proxy_pass http://financial_api; }
+    location = /metrics { return 404; }
     location / { try_files $uri $uri/ /index.html; }
 }
 
@@ -37,6 +38,7 @@ server {
     proxy_set_header X-Request-ID $request_id;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
+    location = /metrics { return 404; }
     location / { proxy_read_timeout 120s; proxy_send_timeout 120s; proxy_pass http://financial_api; }
 }
 
@@ -54,7 +56,7 @@ server {
     proxy_set_header Connection $connection_upgrade;
     location = /health/live { proxy_pass http://financial_api; }
     location = /health/ready { proxy_pass http://financial_api; }
+    location = /metrics { return 404; }
     location /api/ { proxy_read_timeout 120s; proxy_send_timeout 120s; proxy_pass http://financial_api; }
-    location /metrics { proxy_pass http://financial_api; }
     location / { proxy_pass http://financial_web; }
 }

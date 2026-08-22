@@ -5,8 +5,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 source "$ROOT/scripts/deploy/lib.sh"
 
-DOMAIN=""
-EMAIL=""
+DOMAIN="${PORTAINER_DOMAIN:-finance.argws.com.br}"
+EMAIL="${PORTAINER_ADMIN_EMAIL:-admin@finance.argws.com.br}"
 ENV_FILE="$HERE/stack.env"
 LOCAL=false
 INSECURE=false
@@ -17,7 +17,7 @@ ENDPOINT_ID="${PORTAINER_ENDPOINT_ID:-1}"
 STACK_NAME="${PORTAINER_STACK_NAME:-argws-financial-platform}"
 
 usage(){ cat <<USAGE
-Uso: ./deployments/portainer/deploy.sh --domain financeiro.exemplo.com.br --admin-email admin@exemplo.com.br [opções]
+Uso: ./deployments/portainer/deploy.sh [--domain finance.argws.com.br] [--admin-email admin@finance.argws.com.br] [opções]
   --url URL             URL do Portainer
   --api-key CHAVE       API key Portainer
   --endpoint-id ID      Endpoint Docker (padrão: 1)
@@ -26,6 +26,8 @@ Uso: ./deployments/portainer/deploy.sh --domain financeiro.exemplo.com.br --admi
   --local               Executar pelo Docker Compose local em vez da API
   --prepare-only        Gerar ambiente e validar sem chamar Docker/Portainer
   --insecure            Ignorar validação TLS da API Portainer
+
+Runtime: image-only / GHCR latest. Nenhum build ocorre no servidor.
 USAGE
 }
 
@@ -50,24 +52,24 @@ done
 [[ "$EMAIL" == *@* ]] || die "--admin-email inválido"
 require_cmd python3
 
-[[ -f "$ENV_FILE" ]] || cp "$ROOT/.env.example" "$ENV_FILE"
-prepare_env "$ROOT" "$ROOT/.env.example" "$ENV_FILE" "$DOMAIN" "$EMAIL"
+[[ -f "$ENV_FILE" ]] || cp "$ROOT/deployments/portainer/stack.env.example" "$ENV_FILE"
+prepare_env "$ROOT" "$ROOT/deployments/portainer/stack.env.example" "$ENV_FILE" "$DOMAIN" "$EMAIL"
 version="$(canonical_version "$ROOT")"
-
+set_env "$ENV_FILE" APP_NAME "ARGWS Financial Platform"
 set_env "$ENV_FILE" APP_PULL_POLICY always
+set_env "$ENV_FILE" FINANCIAL_DATA_ROOT .
 set_env "$ENV_FILE" BACKEND_IMAGE "ghcr.io/wkarts/argws-financial-api:latest"
 set_env "$ENV_FILE" FRONTEND_IMAGE "ghcr.io/wkarts/argws-financial-web:latest"
 set_env "$ENV_FILE" GATEWAY_IMAGE "ghcr.io/wkarts/argws-financial-gateway:latest"
 set_env "$ENV_FILE" ACME_IMAGE "ghcr.io/wkarts/argws-financial-acme:latest"
 set_env "$ENV_FILE" CLOUDPANEL_AGENT_IMAGE "ghcr.io/wkarts/argws-financial-cloudpanel-agent:latest"
-set_env "$ENV_FILE" RCLONE_CONFIG_PATH "/opt/argws-financial-platform/secrets/rclone.conf"
-set_env "$ENV_FILE" BACKUP_AGE_IDENTITY_PATH "/opt/argws-financial-platform/secrets/backup-age-identity.txt"
 chmod 600 "$ENV_FILE"
 validate_project "$ROOT" true
 
 if $PREPARE_ONLY; then
   log "Ambiente Portainer preparado e validado: $ENV_FILE"
   log "Versão da aplicação: $version"
+  log "Domínio padrão: $DOMAIN"
   log "Imagens: GHCR latest"
   log "Stack: $HERE/stack.yaml"
   exit 0
@@ -85,19 +87,12 @@ fi
 
 [[ -n "$PORTAINER_URL" ]] || die "PORTAINER_URL/--url obrigatório"
 [[ -n "$PORTAINER_API_KEY" ]] || die "PORTAINER_API_KEY/--api-key obrigatório"
-
-args=(
-  --url "$PORTAINER_URL"
-  --api-key "$PORTAINER_API_KEY"
-  --endpoint-id "$ENDPOINT_ID"
-  --stack-name "$STACK_NAME"
-  --stack-file "$HERE/stack.yaml"
-  --env-file "$ENV_FILE"
-)
+args=(--url "$PORTAINER_URL" --api-key "$PORTAINER_API_KEY" --endpoint-id "$ENDPOINT_ID" --stack-name "$STACK_NAME" --stack-file "$HERE/stack.yaml" --env-file "$ENV_FILE")
 $INSECURE && args+=(--insecure)
-
 python3 "$ROOT/scripts/portainer_deploy.py" "${args[@]}"
 log "Stack Portainer criada/atualizada: $STACK_NAME"
-log "Versão da aplicação: $version"
-log "Imagens: GHCR latest"
-log "Credenciais iniciais: $(dirname "$ENV_FILE")/.bootstrap-credentials.txt"
+log "ARGWS Financial Platform $version"
+log "Landing: https://$DOMAIN"
+log "Demo: https://demo.$DOMAIN"
+log "Control Plane: https://control.$DOMAIN"
+log "API: https://api.$DOMAIN"

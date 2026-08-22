@@ -1,7 +1,7 @@
 FROM node:22-alpine AS build
 WORKDIR /app
 ARG VITE_APP_NAME="ARGWS Financial Platform"
-ARG VITE_CONTROL_PLANE_HOST="control.localhost"
+ARG VITE_CONTROL_PLANE_HOST="control.finance.argws.com.br"
 ARG VITE_API_BASE_URL="/api"
 ENV VITE_APP_NAME=$VITE_APP_NAME \
     VITE_CONTROL_PLANE_HOST=$VITE_CONTROL_PLANE_HOST \
