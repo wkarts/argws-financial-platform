@@ -1,55 +1,30 @@
-# Release Notes — v1.0.0-rc.6
+# Release Notes — v1.0.0-rc.7
 
-Esta release corrige o último ponto que ainda podia levar o Dockge a tentar fazer build local: a distribuição passa a publicar um **bundle Dockge dedicado**, pronto para extração direta no diretório de stacks.
+Esta release consolida o runtime da ARGWS Financial Platform em um contrato único: **deploy sempre por imagens GHCR, somente uma porta publicada e validação de configuração antes das migrations**.
 
-## Novo asset Dockge
+## Uma única porta publicada
 
-A Release passa a incluir:
-
-```text
-ARGWS-Financial-Platform-v1.0.0-rc.6-Dockge.zip
-```
-
-Dentro dele existe uma única pasta operacional:
+Somente `financial-gateway` possui `ports:` no runtime:
 
 ```text
-argws-financial-platform/
-├── compose.yaml
-├── .env.example
-├── README.md
-├── DOCKGE_PACKAGE.json
-├── data-postgres/
-├── data-redis/
-├── data-rabbitmq/
-├── data-minio/
-├── data-backups/
-├── data-runtime/
-└── data-celery/
+127.0.0.1:${GATEWAY_PORT}:80
 ```
 
-O `compose.yaml` desse bundle é o Compose **image-only** do Dockge. Ele não contém `build:` e não depende de `backend/`, `frontend/` ou Dockerfiles locais.
+PostgreSQL, Redis, RabbitMQ, MinIO, API, workers e demais serviços continuam acessíveis entre containers pela rede `financial-internal`, sem publicação direta no host.
 
-## Por que esta correção foi necessária
+CloudPanel/Nginx/Reverse Proxy deve apontar somente para o gateway.
 
-O pacote completo de código-fonte continua contendo o `compose.yaml` da raiz destinado a desenvolvimento/build. Quando esse pacote era extraído diretamente dentro da pasta da stack, o Dockge podia selecionar esse Compose e tentar localizar:
+## Todos os deployments são image-only
 
-```text
-./backend
-./frontend
-```
+O `compose.yaml` da raiz passa a ser o runtime canônico e não contém `build:`. O mesmo arquivo é usado como contrato para:
 
-O sintoma típico era:
+- Docker image-only;
+- Dockge;
+- CloudPanel;
+- production;
+- Portainer.
 
-```text
-[+] Building ...
-could not find .../frontend: no such file or directory
-```
-
-A partir desta release, para Dockge o asset correto é explicitamente o arquivo `-Dockge.zip`.
-
-## Imagens operacionais protegidas contra `.env` legado
-
-O Compose Dockge fixa diretamente:
+As imagens da aplicação são fixas em:
 
 ```text
 ghcr.io/wkarts/argws-financial-api:latest
@@ -57,53 +32,100 @@ ghcr.io/wkarts/argws-financial-web:latest
 ghcr.io/wkarts/argws-financial-gateway:latest
 ```
 
-com `pull_policy: always` no próprio Compose. Assim, valores antigos como `APP_PULL_POLICY=build` ou `BACKEND_IMAGE=argws-financial-api:latest` em um `.env` reaproveitado não conseguem reativar build local nem substituir as imagens oficiais do runtime Dockge.
+com `pull_policy: always`.
 
-O `.env.example` continua documentando:
+Development e staging também deixam de usar build em seus deployments.
 
-```env
-APP_PULL_POLICY=always
-FINANCIAL_DATA_ROOT=.
-```
+## Build local isolado
 
-As tags versionadas permanecem apenas para auditoria e rollback.
-
-## Persistência
-
-A persistência continua em bind mounts visíveis dentro da própria pasta da stack:
+O único modelo com `build:` passa a ser:
 
 ```text
-./data-postgres   -> /var/lib/postgresql/data
-./data-redis      -> /data
-./data-rabbitmq   -> /var/lib/rabbitmq
-./data-minio      -> /data
-./data-backups    -> /data/backups
-./data-runtime    -> /data/runtime
-./data-celery     -> /var/lib/celery
+compose.local-build.yaml
 ```
 
-Nenhum desses dados depende de volumes Docker nomeados na stack Dockge.
+Uso explícito:
 
-## Validação e CI
+```bash
+docker compose -f compose.yaml -f compose.local-build.yaml up -d --build
+```
 
-A CI agora também executa `scripts/package_dockge_stack.py` e valida que o ZIP dedicado é gerado corretamente. `scripts/validate_dockge_runtime.py` verifica ausência de `build:`, bind mounts `data-*`, imagens GHCR `:latest` fixas e `pull_policy: always` fixo.
+Esse override existe somente para desenvolvimento local e CI. `deployments/portainer/stack-build.yaml` fica deliberadamente desabilitado para impedir build acidental em servidor.
 
-O workflow de Release só conclui se o bundle Dockge existir e for publicado junto com os demais assets. A verificação pós-release passa a validar nove assets, incluindo o novo ZIP Dockge.
+## Preflight antes de migrations
 
-## Política de alterações no repositório
+Foi adicionado `financial-preflight`, executado com `network_mode: none` antes de inicializar os serviços persistentes e antes de `financial-migrate`.
 
-O workflow de prova de Release deixa de escrever diretamente na `main`. Ele apenas valida a Release e publica um artefato de prova no GitHub Actions. Alterações de código, configuração e documentação seguem o fluxo branch → Pull Request → CI → merge.
+Ele detecta e relata sem imprimir segredos:
 
-## CloudPanel
+- placeholders de produção (`CHANGE_ME`, etc.);
+- `POSTGRES_ADMIN_USER` igual a `POSTGRES_USER` com senha diferente;
+- senha/configuração RabbitMQ inconsistente;
+- credenciais S3/MinIO incompatíveis no MinIO interno;
+- `SMTP_SECURITY` inválido;
+- SMTP porta 465 sem `ssl`;
+- integrações habilitadas sem configuração mínima.
 
-O reverse proxy continua externo à stack e deve apontar para:
+Isso transforma erros que antes apareciam apenas como `financial-migrate exit 1` em falhas explícitas de configuração antes da migration.
+
+## Reparação de `.env`
+
+`scripts/generate_secrets.py` passa a:
+
+- gerar placeholders ainda não configurados;
+- sincronizar `POSTGRES_ADMIN_PASSWORD` quando o usuário admin é o mesmo usuário PostgreSQL;
+- sincronizar S3 com MinIO interno;
+- regenerar URLs RabbitMQ/Celery a partir da senha efetiva;
+- corrigir `SMTP_SECURITY=startssl` e alinhar porta 465 com `ssl`;
+- preservar segredos reais existentes, a menos que `--force` seja solicitado.
+
+## Persistência e bundle Dockge
+
+Persistência continua dentro da pasta da stack:
 
 ```text
-http://127.0.0.1:GATEWAY_PORT
+./data-postgres
+./data-redis
+./data-rabbitmq
+./data-minio
+./data-backups
+./data-runtime
+./data-celery
+./secrets
 ```
 
-preservando o cabeçalho `Host`.
+O asset dedicado `ARGWS-Financial-Platform-v1.0.0-rc.7-Dockge.zip` inclui também os arquivos vazios necessários em `secrets/`.
 
-## Segurança operacional
+## Logs e auditoria futura
 
-Não exclua os diretórios `data-*` em atualização ou redeploy. Segredos expostos anteriormente devem ser rotacionados antes de produção.
+Os containers usam logging Docker com rotação. A arquitetura de auditoria pelo Control Plane foi formalizada sem abrir portas internas e sem entregar o Docker socket bruto à aplicação.
+
+Acesso excepcional a RabbitMQ, MinIO, PostgreSQL ou Redis deve ser temporário via `docker exec`, SSH tunnel, VPN ou agente interno autenticado, e não por portas permanentes.
+
+## CI e proteção contra regressão
+
+A CI passa a validar:
+
+- ausência de `build:` em qualquer deployment;
+- existência do build somente em `compose.local-build.yaml`;
+- somente `financial-gateway` com host port;
+- PostgreSQL/Redis/RabbitMQ/MinIO sem portas publicadas;
+- GHCR `:latest` e `pull_policy: always` no runtime;
+- igualdade dos arquivos de runtime ao Compose canônico;
+- bundle Dockge e preflight;
+- backend, frontend, builds Docker e smoke test.
+
+## Atualização
+
+Para runtime normal:
+
+```bash
+docker compose pull
+docker compose up -d --remove-orphans
+```
+
+Não use `--build` em servidor.
+
+## Segurança
+
+Credenciais expostas em logs, chats ou arquivos compartilhados devem ser rotacionadas antes da publicação em produção. A release não inclui segredos reais.
