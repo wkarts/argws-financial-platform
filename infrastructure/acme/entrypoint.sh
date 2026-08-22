@@ -1,61 +1,67 @@
 #!/usr/bin/env sh
 set -eu
 
+# O .env da plataforma usa LOG_LEVEL=INFO para a aplicação. O acme.sh também
+# interpreta LOG_LEVEL, porém espera um nível numérico. Removemos apenas desta
+# imagem para evitar "sh: INFO: out of range" sem alterar o logging da plataforma.
+unset LOG_LEVEL || true
+
 case "${CF_Token:-}" in
-  ""|"__CONFIGURE_CLOUDFLARE_TOKEN__")
-    echo "CLOUDFLARE_API_TOKEN/CF_Token obrigatório para ACME DNS-01" >&2
+  ""|CHANGE_ME*|__CONFIGURE_*)
+    echo "CLOUDFLARE_API_TOKEN/CF_Token precisa ser configurado para o perfil ACME." >&2
     exit 64
     ;;
 esac
-DOMAIN="${ACME_DOMAIN:?ACME_DOMAIN obrigatório}"
-EMAIL="${ACME_EMAIL:?ACME_EMAIL obrigatório}"
+
+DOMAIN="${ACME_DOMAIN:-}"
+EMAIL="${ACME_EMAIL:-}"
 STAGING="${ACME_STAGING:-false}"
 DNS_SLEEP="${ACME_DNS_SLEEP:-20}"
 CHECK_INTERVAL="${ACME_CHECK_INTERVAL_SECONDS:-43200}"
 SERVER="letsencrypt"
 
-if [ "$STAGING" = "true" ] || [ "$STAGING" = "1" ]; then
+if [ -z "$DOMAIN" ] || [ -z "$EMAIL" ]; then
+  echo "ACME_DOMAIN e ACME_EMAIL são obrigatórios." >&2
+  exit 65
+fi
+
+if [ "$STAGING" = "true" ]; then
   SERVER="letsencrypt_test"
 fi
 
-mkdir -p /certs /acme.sh
-find /acme.sh -type f -name '*.conf' -exec sed -i '/^CF_Zone_ID=/d' {} \; 2>/dev/null || true
-unset CF_Zone_ID || true
+mkdir -p /certs
+
 acme.sh --set-default-ca --server "$SERVER"
 acme.sh --register-account -m "$EMAIL" --server "$SERVER" || true
 
 issue_certificate() {
-  acme.sh --issue --dns dns_cf -d "$DOMAIN" -d "*.$DOMAIN" \
-    --keylength ec-256 --server "$SERVER" --dnssleep "$DNS_SLEEP"
+  acme.sh --issue \
+    --dns dns_cf \
+    -d "$DOMAIN" \
+    -d "*.$DOMAIN" \
+    --dnssleep "$DNS_SLEEP" \
+    --server "$SERVER" || true
 }
 
 install_bundle() {
-  acme.sh --install-cert -d "$DOMAIN" --ecc \
-    --fullchain-file /certs/fullchain.pem \
+  acme.sh --install-cert -d "$DOMAIN" \
+    --cert-file /certs/cert.pem \
     --key-file /certs/privkey.pem \
     --ca-file /certs/ca.pem \
-    --cert-file /certs/cert.pem \
+    --fullchain-file /certs/fullchain.pem \
     --reloadcmd "date -Iseconds > /certs/last-installed-at.txt"
-  chmod 0600 /certs/privkey.pem
-  chmod 0644 /certs/fullchain.pem /certs/cert.pem /certs/ca.pem
-  date -Iseconds > /certs/last-acme-run-at.txt
 }
 
-if ! issue_certificate; then
-  acme.sh --renew -d "$DOMAIN" --ecc --server "$SERVER" || true
+if [ ! -s "/acme.sh/$DOMAIN/fullchain.cer" ]; then
+  issue_certificate
 fi
-install_bundle
-
-cat > /certs/README.txt <<DOC
-ARGWS Financial Platform - certificado ACME
-Domínio: $DOMAIN
-Wildcard: *.$DOMAIN
-Desafio: DNS-01 Cloudflare
-DOC
-chmod 0644 /certs/README.txt
+install_bundle || {
+  issue_certificate
+  install_bundle
+}
 
 while :; do
   sleep "$CHECK_INTERVAL"
-  acme.sh --cron --home /acme.sh || true
+  acme.sh --cron --home /acme.sh --server "$SERVER" || true
   install_bundle || true
 done
