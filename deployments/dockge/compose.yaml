@@ -95,11 +95,11 @@ services:
       - -ec
       - |
           mkdir -p /data/postgres /data/redis /data/rabbitmq /data/minio \
-            /data/backups /data/runtime /data/celery /data-prometheus \
+            /data/backups /data/runtime /data/celery /data/prometheus \
             /data/grafana /data/monitoring /data/acme /data/certs \
             /data/cloudpanel-agent /secrets
           touch /secrets/rclone.conf /secrets/backup-age-identity.txt
-          chmod 0777 /data/postgres /data/redis /data/rabbitmq /data/minio /data-prometheus /data/grafana
+          chmod 0777 /data/postgres /data/redis /data/rabbitmq /data/minio /data/prometheus /data/grafana
           chmod 0770 /data/backups /data/runtime /data/celery /data/monitoring
           chmod 0750 /data/acme /data/certs /data/cloudpanel-agent
           chmod 0700 /secrets
