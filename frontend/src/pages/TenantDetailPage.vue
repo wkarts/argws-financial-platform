@@ -45,6 +45,11 @@ const demoMode = computed(() => Boolean(features.value.demo_mode))
 const landingMode = computed(() => String(features.value.landing_mode || 'PLATFORM'))
 const whatsappEnabled = computed(() => features.value.whatsapp_enabled !== false)
 const whatsappBilling = computed(() => String(features.value.whatsapp_billing_mode || 'INCLUDED'))
+const tenantPlanName = computed(() => {
+  const current = tenant.value
+  if (!current) return '—'
+  return plans.value.find(plan => plan.code === current.plan_code)?.name || current.plan_code
+})
 
 async function load() {
   error.value = ''
@@ -175,7 +180,7 @@ onMounted(load)
   <template v-if="tenant">
     <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
       <div class="card"><p class="text-xs text-slate-500">Status</p><div class="mt-2"><StatusBadge :status="tenant.status" /></div></div>
-      <div class="card"><p class="text-xs text-slate-500">Plano</p><p class="mt-2 text-sm font-semibold">{{ plans.find(p=>p.code===tenant.plan_code)?.name || tenant.plan_code }}</p></div>
+      <div class="card"><p class="text-xs text-slate-500">Plano</p><p class="mt-2 text-sm font-semibold">{{ tenantPlanName }}</p></div>
       <div class="card"><p class="text-xs text-slate-500">Demonstração</p><p class="mt-2 text-sm font-semibold" :class="demoMode?'text-amber-700':'text-emerald-700'">{{ demoMode ? 'Ativa' : 'Desativada' }}</p></div>
       <div class="card"><p class="text-xs text-slate-500">Landing page</p><p class="mt-2 text-sm font-semibold">{{ landingMode==='DISABLED'?'Desativada':landingMode==='EXTERNAL'?'Externa':'Gerenciada' }}</p></div>
       <div class="card"><p class="text-xs text-slate-500">WhatsApp</p><p class="mt-2 text-sm font-semibold" :class="whatsappEnabled?'text-emerald-700':'text-slate-500'">{{ whatsappEnabled ? (whatsappBilling==='ADDON'?'Adicional':'Incluído') : 'Desativado' }}</p></div>
