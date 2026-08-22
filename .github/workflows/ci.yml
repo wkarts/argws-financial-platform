@@ -68,6 +68,10 @@ jobs:
       - run: test -s "/tmp/dockge-package/ARGWS-Financial-Platform-v$(tr -d '[:space:]' < VERSION)-Dockge.zip"
       - run: cp .env.example .env
       - run: python scripts/generate_secrets.py --env .env
+      - name: Prepare deployment env files for compose validation
+        run: |
+          cp deployments/dockge/.env.example deployments/dockge/.env
+          cp deployments/cloudpanel/.env.example deployments/cloudpanel/.env
       - run: mkdir -p data-postgres data-redis data-rabbitmq data-minio data-backups data-runtime data-celery data-acme data-certs data-cloudpanel-agent secrets && touch secrets/rclone.conf secrets/backup-age-identity.txt
       - run: docker compose --env-file .env -f compose.yaml config --quiet
       - run: docker compose --env-file .env -f compose.yaml -f compose.local-build.yaml config --quiet
