@@ -63,7 +63,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-allowed_hosts = [f"*{item}" if item.startswith(".") else item for item in settings.trusted_host_list]
+configured_hosts = [f"*{item}" if item.startswith(".") else item for item in settings.trusted_host_list]
+# Prometheus coleta diretamente pelo DNS interno do Compose. Esse hostname não
+# precisa ser exposto ao público, mas precisa passar pelo TrustedHostMiddleware.
+allowed_hosts = sorted(set(configured_hosts) | {"financial-api", "localhost", "127.0.0.1"})
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts or ["*"])
 app.add_middleware(
     CORSMiddleware,
