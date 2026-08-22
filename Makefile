@@ -2,11 +2,12 @@ SHELL := /bin/bash
 COMPOSE ?= docker compose --env-file .env -f compose.yaml
 LOCAL_COMPOSE ?= docker compose --env-file .env -f compose.yaml -f compose.local-build.yaml
 
-.PHONY: help env up up-local down logs ps build-local compose-config migrate migrate-tenants bootstrap test lint backup restore validate health package
+.PHONY: help env prepare-runtime up up-local down logs ps build-local compose-config migrate migrate-tenants bootstrap test lint backup restore validate health package
 help:
 	@printf '%s\n' \
 	  'ARGWS Financial Platform' \
-	  '  make env              cria .env e segredos' \
+	  '  make env              cria/repara .env e segredos' \
+	  '  make prepare-runtime  cria data-* e arquivos secrets locais' \
 	  '  make up               deploy image-only: pull GHCR + up' \
 	  '  make up-local         desenvolvimento explícito com build local' \
 	  '  make build-local      somente constrói imagens locais' \
@@ -25,19 +26,27 @@ env:
 	@test -f .env || cp .env.example .env
 	python3 scripts/generate_secrets.py --env .env
 
-up: env
+prepare-runtime:
+	@mkdir -p data-postgres data-redis data-rabbitmq data-minio data-backups data-runtime data-celery secrets
+	@touch secrets/rclone.conf secrets/backup-age-identity.txt
+	@chmod 0777 data-postgres data-redis data-rabbitmq data-minio
+	@chmod 0770 data-backups data-runtime data-celery
+	@chmod 0700 secrets
+	@chmod 0600 secrets/rclone.conf secrets/backup-age-identity.txt
+
+up: env prepare-runtime
 	$(COMPOSE) config --quiet
 	$(COMPOSE) pull
 	$(COMPOSE) up -d --remove-orphans
 
-build-local: env
+build-local: env prepare-runtime
 	$(LOCAL_COMPOSE) build --pull
 
-up-local: env
+up-local: env prepare-runtime
 	$(LOCAL_COMPOSE) config --quiet
 	$(LOCAL_COMPOSE) up -d --build --remove-orphans
 
-compose-config: env
+compose-config: env prepare-runtime
 	$(COMPOSE) config --quiet
 
 down:
@@ -52,13 +61,13 @@ ps:
 health:
 	./deployments/dockge/healthcheck.sh
 
-migrate:
+migrate: prepare-runtime
 	$(COMPOSE) run --rm financial-migrate
 
-migrate-tenants:
+migrate-tenants: prepare-runtime
 	$(COMPOSE) run --rm financial-migrate-tenants
 
-bootstrap:
+bootstrap: prepare-runtime
 	$(COMPOSE) run --rm financial-bootstrap
 
 test:
