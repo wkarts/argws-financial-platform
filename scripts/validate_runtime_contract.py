@@ -62,6 +62,13 @@ def load(path: Path) -> dict:
     return data
 
 
+def command_text(service: dict) -> str:
+    command = service.get("command") or []
+    if isinstance(command, str):
+        return command
+    return "\n".join(str(item) for item in command)
+
+
 def validate_runtime(path: Path) -> None:
     data = load(path)
     if has_build(data):
@@ -134,6 +141,19 @@ def validate_runtime(path: Path) -> None:
             if token not in text:
                 fail(f"{token} ausente em {path.relative_to(ROOT)}")
 
+        monitoring_init = services.get("financial-monitoring-init")
+        if not isinstance(monitoring_init, dict):
+            fail(f"financial-monitoring-init ausente em {path.relative_to(ROOT)}")
+        monitoring_command = command_text(monitoring_init)
+        for directory in (
+            "/config/grafana/provisioning/datasources",
+            "/config/grafana/provisioning/dashboards",
+            "/config/grafana/provisioning/plugins",
+            "/config/grafana/provisioning/alerting",
+        ):
+            if directory not in monitoring_command:
+                fail(f"diretório Grafana ausente em {path.relative_to(ROOT)}: {directory}")
+
 
 def main() -> int:
     for path in RUNTIMES:
@@ -143,6 +163,11 @@ def main() -> int:
     cloudpanel = (ROOT / "deployments/cloudpanel/compose.yaml").read_bytes()
     if dockge != cloudpanel:
         fail("Dockge e CloudPanel precisam compartilhar o mesmo runtime CloudPanel-aware")
+
+    acme_entrypoint = (ROOT / "infrastructure/acme/entrypoint.sh").read_text(encoding="utf-8")
+    for token in ('ACME_LOG_LEVEL="${ACME_LOG_LEVEL:-1}"', 'export LOG_LEVEL="$ACME_LOG_LEVEL"'):
+        if token not in acme_entrypoint:
+            fail("ACME precisa normalizar LOG_LEVEL para valor numérico antes de executar acme.sh")
 
     local = yaml.safe_load((ROOT / "compose.local-build.yaml").read_text(encoding="utf-8"))
     if not has_build(local):
@@ -165,6 +190,8 @@ def main() -> int:
     print("- única porta publicada: financial-gateway")
     print("- serviços internos sem host ports: OK")
     print("- Dockge/CloudPanel com wildcard ACME automático: OK")
+    print("- Grafana provisioning completo: OK")
+    print("- ACME LOG_LEVEL numérico: OK")
     print("- build local isolado em compose.local-build.yaml: OK")
     return 0
 
