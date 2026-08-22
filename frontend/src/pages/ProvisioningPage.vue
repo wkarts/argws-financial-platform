@@ -103,7 +103,7 @@ onBeforeUnmount(() => {
       <tr v-if="!jobs.length"><td colspan="6" class="py-10 text-center text-slate-400">Nenhum job encontrado.</td></tr>
     </tbody></table>
   </div>
-  <PaginationBar v-model="page" :pages="pages" class="mt-4" @update:model-value="load" />
+  <PaginationBar v-model="page" :pages="pages" class="mt-4" @update:model-value="() => load()" />
 
   <section class="mt-6">
     <div class="mb-3 flex items-center gap-2"><Globe2 :size="19" class="text-teal-700" /><h2 class="text-base font-semibold">Registry de domínios</h2></div>
