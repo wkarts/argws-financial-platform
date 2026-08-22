@@ -3,10 +3,10 @@ import { useAuthStore } from '../stores/auth'
 import AppLayout from '../layouts/AppLayout.vue'
 import LoginPage from '../pages/LoginPage.vue'
 import NotFoundPage from '../pages/NotFoundPage.vue'
+import PlaneDashboardPage from '../pages/PlaneDashboardPage.vue'
 import PublicPaymentPage from '../pages/PublicPaymentPage.vue'
 
 // Control Plane
-import ControlDashboardPage from '../pages/ControlDashboardPage.vue'
 import TenantsPage from '../pages/TenantsPage.vue'
 import TenantDetailPage from '../pages/TenantDetailPage.vue'
 import PlansPage from '../pages/PlansPage.vue'
@@ -20,7 +20,6 @@ import ControlAuditPage from '../pages/ControlAuditPage.vue'
 import ControlSettingsPage from '../pages/ControlSettingsPage.vue'
 
 // Tenant Plane
-import TenantDashboardPage from '../pages/TenantDashboardPage.vue'
 import CompaniesPage from '../pages/CompaniesPage.vue'
 import CustomersPage from '../pages/CustomersPage.vue'
 import ServicesPage from '../pages/ServicesPage.vue'
@@ -51,7 +50,6 @@ const controlMeta = { plane: 'control' as const }
 const tenantMeta = { plane: 'tenant' as const }
 
 const controlRoutes: RouteRecordRaw[] = [
-  { path: '', name: 'control-dashboard', component: ControlDashboardPage, meta: controlMeta },
   { path: 'tenants', name: 'tenants', component: TenantsPage, meta: controlMeta },
   { path: 'tenants/:id', name: 'tenant-detail', component: TenantDetailPage, meta: controlMeta },
   { path: 'plans', name: 'plans', component: PlansPage, meta: controlMeta },
@@ -69,7 +67,6 @@ const controlRoutes: RouteRecordRaw[] = [
 ]
 
 const tenantRoutes: RouteRecordRaw[] = [
-  { path: '', name: 'tenant-dashboard', component: TenantDashboardPage, meta: tenantMeta },
   { path: 'companies', name: 'companies', component: CompaniesPage, meta: tenantMeta },
   { path: 'customers', name: 'customers', component: CustomersPage, meta: tenantMeta },
   { path: 'services', name: 'services', component: ServicesPage, meta: tenantMeta },
@@ -103,7 +100,11 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/',
     component: AppLayout,
-    children: [...controlRoutes, ...tenantRoutes]
+    children: [
+      { path: '', name: 'home', component: PlaneDashboardPage },
+      ...controlRoutes,
+      ...tenantRoutes
+    ]
   },
   { path: '/:pathMatch(.*)*', component: NotFoundPage, meta: { public: true } }
 ]
@@ -117,9 +118,9 @@ router.beforeEach(to => {
   if (!to.meta.public && !auth.authenticated) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
-  if (to.name === 'login' && auth.authenticated) return { path: '/' }
-  if (to.meta.plane === 'control' && !auth.isControlPlane) return { path: '/' }
-  if (to.meta.plane === 'tenant' && auth.isControlPlane) return { path: '/' }
+  if (to.name === 'login' && auth.authenticated) return { name: 'home' }
+  if (to.meta.plane === 'control' && !auth.isControlPlane) return { name: 'home' }
+  if (to.meta.plane === 'tenant' && auth.isControlPlane) return { name: 'home' }
   return true
 })
 
